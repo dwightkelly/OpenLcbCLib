@@ -273,6 +273,14 @@ typedef struct {
     void (*factory_reset)(openlcb_statemachine_info_t *statemachine_info, config_mem_operations_request_info_t *config_mem_operations_request_info);
 
         /**
+         * @brief Update Complete -- configuration tool has finished writing; node should re-load and apply config. Optional (NULL = NACK with not-implemented).
+         *
+         * @param statemachine_info @ref openlcb_statemachine_info_t context
+         * @param config_mem_operations_request_info @ref config_mem_operations_request_info_t context
+         */
+    void (*update_complete)(openlcb_statemachine_info_t *statemachine_info, config_mem_operations_request_info_t *config_mem_operations_request_info);
+
+        /**
          * @brief Return delayed reply time flag for config memory reads. Optional.
          *
          * @details Return 0 for no delay, or (0x80 | N) for 2^N second reply pending.

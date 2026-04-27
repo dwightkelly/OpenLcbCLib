@@ -910,7 +910,7 @@ static void _build_config_mem_write(void) {
 
 }
 
-    /** @brief Wires operations commands (options, address space info, lock, reboot, factory reset) into the config ops interface. */
+    /** @brief Wires operations commands (options, address space info, lock, reboot, factory reset, update complete) into the config ops interface. */
 static void _build_config_mem_operations(void) {
 
     memset(&_config_ops, 0, sizeof(_config_ops));
@@ -932,6 +932,7 @@ static void _build_config_mem_operations(void) {
     _config_ops.operations_request_reset_reboot           = _config->reboot;
 #ifndef OPENLCB_COMPILE_BOOTLOADER
     _config_ops.operations_request_factory_reset          = _config->factory_reset;
+    _config_ops.operations_request_update_complete        = _config->update_complete;
 #endif
 
 }

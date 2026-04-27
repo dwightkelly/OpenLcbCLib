@@ -803,6 +803,47 @@ static uint16_t _config_mem_write(openlcb_node_t *node, uint32_t address, uint16
     return (uint16_t) result;
 }
 
+// ---------------------------------------------------------------------------
+// Memory-config operations callbacks (notification-only — the library's
+// two-phase handler sends Datagram Received OK before invoking these)
+// ---------------------------------------------------------------------------
+
+static void _reboot(openlcb_statemachine_info_t *sm, config_mem_operations_request_info_t *info)
+{
+    (void) info;
+    EM_ASM({
+        if (Module.onReboot) {
+            var nid = BigInt($0) | (BigInt($1) << 32n);
+            Module.onReboot(nid);
+        }
+    }, (uint32_t) (sm->openlcb_node->id & 0xFFFFFFFFu),
+       (uint32_t) ((sm->openlcb_node->id >> 32) & 0xFFFFu));
+}
+
+static void _factory_reset(openlcb_statemachine_info_t *sm, config_mem_operations_request_info_t *info)
+{
+    (void) info;
+    EM_ASM({
+        if (Module.onFactoryReset) {
+            var nid = BigInt($0) | (BigInt($1) << 32n);
+            Module.onFactoryReset(nid);
+        }
+    }, (uint32_t) (sm->openlcb_node->id & 0xFFFFFFFFu),
+       (uint32_t) ((sm->openlcb_node->id >> 32) & 0xFFFFu));
+}
+
+static void _update_complete(openlcb_statemachine_info_t *sm, config_mem_operations_request_info_t *info)
+{
+    (void) info;
+    EM_ASM({
+        if (Module.onUpdateComplete) {
+            var nid = BigInt($0) | (BigInt($1) << 32n);
+            Module.onUpdateComplete(nid);
+        }
+    }, (uint32_t) (sm->openlcb_node->id & 0xFFFFFFFFu),
+       (uint32_t) ((sm->openlcb_node->id >> 32) & 0xFFFFu));
+}
+
 #endif
 
 // ---------------------------------------------------------------------------
@@ -822,6 +863,9 @@ static const openlcb_config_t _openlcb_config = {
 #ifdef OPENLCB_COMPILE_MEMORY_CONFIGURATION
     .config_mem_read         = &_config_mem_read,
     .config_mem_write        = &_config_mem_write,
+    .reboot                  = &_reboot,
+    .factory_reset           = &_factory_reset,
+    .update_complete         = &_update_complete,
 #endif
     .on_optional_interaction_rejected = &_on_optional_interaction_rejected,
     .on_terminate_due_to_error        = &_on_terminate_due_to_error,
