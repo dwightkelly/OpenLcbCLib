@@ -58,7 +58,7 @@
  * - Configuration memory address calculation
  *
  * @author Jim Kueneman
- * @date 20 Jan 2026
+ * @date 28 Apr 2026
  */
 
 #include "test/main_Test.hxx"
@@ -285,12 +285,34 @@ uint16_t mock_config_memory_read(openlcb_node_t *openlcb_node, uint32_t address,
 // INTERFACE CONFIGURATIONS
 // ============================================================================
 
+// ----------------------------------------------------------------------------
+// SNIP reply callback tracking (for on_snip_reply tests)
+// ----------------------------------------------------------------------------
+
+static bool snip_reply_callback_fired = false;
+static node_id_t snip_reply_source_id = 0;
+static uint16_t snip_reply_source_alias = 0;
+static openlcb_msg_t *snip_reply_msg_ptr = nullptr;
+
+void mock_on_snip_reply(source_info_t *source, openlcb_msg_t *incoming_msg)
+{
+    snip_reply_callback_fired = true;
+    snip_reply_source_id = source->source_id;
+    snip_reply_source_alias = source->source_alias;
+    snip_reply_msg_ptr = incoming_msg;
+}
+
 interface_openlcb_protocol_snip_t interface_protocol_snip = {
     .config_memory_read = mock_config_memory_read
 };
 
 interface_openlcb_protocol_snip_t interface_protocol_snip_null = {
     .config_memory_read = NULL  // NULL callback for safety testing
+};
+
+interface_openlcb_protocol_snip_t interface_protocol_snip_with_on_reply = {
+    .config_memory_read = mock_config_memory_read,
+    .on_snip_reply      = mock_on_snip_reply
 };
 
 interface_openlcb_node_t interface_openlcb_node = {};
@@ -307,6 +329,11 @@ void _reset_variables(void)
     config_read_address = 0;
     config_read_count = 0;
     config_read_type = 0;
+
+    snip_reply_callback_fired = false;
+    snip_reply_source_id = 0;
+    snip_reply_source_alias = 0;
+    snip_reply_msg_ptr = nullptr;
 }
 
 /**
@@ -329,6 +356,51 @@ void _global_initialize_null_callbacks(void)
     OpenLcbNode_initialize(&interface_openlcb_node);
     OpenLcbBufferFifo_initialize();
     OpenLcbBufferStore_initialize();
+}
+
+/**
+ * @brief Initializes with on_snip_reply callback wired in
+ */
+void _global_initialize_with_on_reply(void)
+{
+    ProtocolSnip_initialize(&interface_protocol_snip_with_on_reply);
+    OpenLcbNode_initialize(&interface_openlcb_node);
+    OpenLcbBufferFifo_initialize();
+    OpenLcbBufferStore_initialize();
+}
+
+/**
+ * @brief Build a well-formed SNIP reply payload directly into msg.
+ *
+ * Lays out the 8 fields per SimpleNodeInformationS §5.1: mfg version byte,
+ * mfg name, model, hw version, sw version, user version byte, user name,
+ * user description.  Sets payload_count and MTI.
+ */
+void _build_snip_reply_payload(openlcb_msg_t *msg,
+                               uint8_t mfg_version, const char *name, const char *model,
+                               const char *hw_ver, const char *sw_ver,
+                               uint8_t user_version, const char *user_name, const char *user_desc)
+{
+    uint8_t *payload_ptr = (uint8_t *)msg->payload;
+    uint16_t offset = 0;
+
+    payload_ptr[offset++] = mfg_version;
+    strcpy((char *)&payload_ptr[offset], name);
+    offset += strlen(name) + 1;
+    strcpy((char *)&payload_ptr[offset], model);
+    offset += strlen(model) + 1;
+    strcpy((char *)&payload_ptr[offset], hw_ver);
+    offset += strlen(hw_ver) + 1;
+    strcpy((char *)&payload_ptr[offset], sw_ver);
+    offset += strlen(sw_ver) + 1;
+    payload_ptr[offset++] = user_version;
+    strcpy((char *)&payload_ptr[offset], user_name);
+    offset += strlen(user_name) + 1;
+    strcpy((char *)&payload_ptr[offset], user_desc);
+    offset += strlen(user_desc) + 1;
+
+    msg->mti = MTI_SIMPLE_NODE_INFO_REPLY;
+    msg->payload_count = offset;
 }
 
 // ============================================================================
@@ -1281,6 +1353,426 @@ TEST(ProtocolSnip, process_string_length_equals_byte_count)
     EXPECT_EQ(payload_ptr[9], 0x00);  // Null terminator
     EXPECT_STREQ((char *)payload_ptr, "ShortName");
 
+}
+
+// ============================================================================
+// SECTION 5: SNIP Reply Receive Path (handler dispatch + extractors)
+// ============================================================================
+
+// ============================================================================
+// TEST: Handle Reply Fires on_snip_reply Callback
+// @details Builds a valid SNIP reply payload, registers an on_snip_reply
+// callback, runs the handler, and verifies the callback fired with the
+// correct source NodeID/alias and message pointer.
+// @coverage ProtocolSnip_handle_simple_node_info_reply() — fire path
+// ============================================================================
+
+TEST(ProtocolSnip, handle_reply_fires_callback_on_valid_reply)
+{
+    _reset_variables();
+    _global_initialize_with_on_reply();
+
+    openlcb_node_t *node1 = OpenLcbNode_allocate(DEST_ID, &_node_parameters_main_node);
+    node1->alias = DEST_ALIAS;
+
+    openlcb_msg_t *incoming_msg = OpenLcbBufferStore_allocate_buffer(SNIP);
+    openlcb_msg_t *outgoing_msg = OpenLcbBufferStore_allocate_buffer(SNIP);
+
+    ASSERT_NE(node1, nullptr);
+    ASSERT_NE(incoming_msg, nullptr);
+    ASSERT_NE(outgoing_msg, nullptr);
+
+    incoming_msg->source_id = SOURCE_ID;
+    incoming_msg->source_alias = SOURCE_ALIAS;
+    incoming_msg->dest_id = DEST_ID;
+    incoming_msg->dest_alias = DEST_ALIAS;
+
+    _build_snip_reply_payload(incoming_msg, 4, "Mfg", "Model", "HW", "SW", 2, "User", "Desc");
+
+    openlcb_statemachine_info_t statemachine_info;
+    statemachine_info.openlcb_node = node1;
+    statemachine_info.incoming_msg_info.msg_ptr = incoming_msg;
+    statemachine_info.incoming_msg_info.enumerate = false;
+    statemachine_info.outgoing_msg_info.msg_ptr = outgoing_msg;
+    statemachine_info.outgoing_msg_info.enumerate = false;
+    statemachine_info.outgoing_msg_info.valid = true;  // intentionally true so we can verify reset
+
+    ProtocolSnip_handle_simple_node_info_reply(&statemachine_info);
+
+    EXPECT_FALSE(statemachine_info.outgoing_msg_info.valid);
+    EXPECT_TRUE(snip_reply_callback_fired);
+    EXPECT_EQ(snip_reply_source_id, SOURCE_ID);
+    EXPECT_EQ(snip_reply_source_alias, SOURCE_ALIAS);
+    EXPECT_EQ(snip_reply_msg_ptr, incoming_msg);
+}
+
+// ============================================================================
+// TEST: Handle Reply Drops When Callback NULL
+// @details With on_snip_reply NULL (interface_protocol_snip), even a valid
+// reply must not crash and must leave outgoing valid = false.
+// @coverage ProtocolSnip_handle_simple_node_info_reply() — NULL-callback path
+// ============================================================================
+
+TEST(ProtocolSnip, handle_reply_drops_when_callback_null)
+{
+    _reset_variables();
+    _global_initialize();  // interface without on_snip_reply
+
+    openlcb_node_t *node1 = OpenLcbNode_allocate(DEST_ID, &_node_parameters_main_node);
+    node1->alias = DEST_ALIAS;
+
+    openlcb_msg_t *incoming_msg = OpenLcbBufferStore_allocate_buffer(SNIP);
+    openlcb_msg_t *outgoing_msg = OpenLcbBufferStore_allocate_buffer(SNIP);
+
+    ASSERT_NE(node1, nullptr);
+    ASSERT_NE(incoming_msg, nullptr);
+    ASSERT_NE(outgoing_msg, nullptr);
+
+    _build_snip_reply_payload(incoming_msg, 4, "Mfg", "Model", "HW", "SW", 2, "User", "Desc");
+
+    openlcb_statemachine_info_t statemachine_info;
+    statemachine_info.openlcb_node = node1;
+    statemachine_info.incoming_msg_info.msg_ptr = incoming_msg;
+    statemachine_info.incoming_msg_info.enumerate = false;
+    statemachine_info.outgoing_msg_info.msg_ptr = outgoing_msg;
+    statemachine_info.outgoing_msg_info.enumerate = false;
+    statemachine_info.outgoing_msg_info.valid = true;
+
+    ProtocolSnip_handle_simple_node_info_reply(&statemachine_info);
+
+    EXPECT_FALSE(statemachine_info.outgoing_msg_info.valid);
+    EXPECT_FALSE(snip_reply_callback_fired);
+}
+
+// ============================================================================
+// TEST: Handle Reply Drops Malformed Payload
+// @details With callback registered, an invalid reply (wrong null count) must
+// not fire on_snip_reply.
+// @coverage ProtocolSnip_handle_simple_node_info_reply() — validate-fail path
+// ============================================================================
+
+TEST(ProtocolSnip, handle_reply_drops_malformed_payload)
+{
+    _reset_variables();
+    _global_initialize_with_on_reply();
+
+    openlcb_node_t *node1 = OpenLcbNode_allocate(DEST_ID, &_node_parameters_main_node);
+    node1->alias = DEST_ALIAS;
+
+    openlcb_msg_t *incoming_msg = OpenLcbBufferStore_allocate_buffer(SNIP);
+    openlcb_msg_t *outgoing_msg = OpenLcbBufferStore_allocate_buffer(SNIP);
+
+    ASSERT_NE(node1, nullptr);
+    ASSERT_NE(incoming_msg, nullptr);
+    ASSERT_NE(outgoing_msg, nullptr);
+
+    // Build a payload with only 3 nulls — invalid SNIP reply
+    incoming_msg->mti = MTI_SIMPLE_NODE_INFO_REPLY;
+    uint8_t *payload_ptr = (uint8_t *)incoming_msg->payload;
+    uint16_t offset = 0;
+    payload_ptr[offset++] = 4;
+    strcpy((char *)&payload_ptr[offset], "Mfg");
+    offset += 4;  // includes null
+    strcpy((char *)&payload_ptr[offset], "Model");
+    offset += 6;
+    strcpy((char *)&payload_ptr[offset], "HW");
+    offset += 3;
+    incoming_msg->payload_count = offset;
+
+    openlcb_statemachine_info_t statemachine_info;
+    statemachine_info.openlcb_node = node1;
+    statemachine_info.incoming_msg_info.msg_ptr = incoming_msg;
+    statemachine_info.incoming_msg_info.enumerate = false;
+    statemachine_info.outgoing_msg_info.msg_ptr = outgoing_msg;
+    statemachine_info.outgoing_msg_info.enumerate = false;
+    statemachine_info.outgoing_msg_info.valid = true;
+
+    ProtocolSnip_handle_simple_node_info_reply(&statemachine_info);
+
+    EXPECT_FALSE(statemachine_info.outgoing_msg_info.valid);
+    EXPECT_FALSE(snip_reply_callback_fired);
+}
+
+// ============================================================================
+// TEST: Extract Manufacturer Version ID
+// ============================================================================
+
+TEST(ProtocolSnip, extract_manufacturer_version_id)
+{
+    _reset_variables();
+    _global_initialize();
+
+    openlcb_msg_t *msg = OpenLcbBufferStore_allocate_buffer(SNIP);
+    ASSERT_NE(msg, nullptr);
+
+    _build_snip_reply_payload(msg, 4, "Mfg", "Model", "HW", "SW", 2, "User", "Desc");
+
+    uint8_t version = 0;
+    uint16_t result = ProtocolSnip_extract_manufacturer_version_id(msg, &version);
+
+    EXPECT_EQ(result, 1);
+    EXPECT_EQ(version, 4);
+}
+
+// ============================================================================
+// TEST: Extract Manufacturer Name
+// ============================================================================
+
+TEST(ProtocolSnip, extract_name)
+{
+    _reset_variables();
+    _global_initialize();
+
+    openlcb_msg_t *msg = OpenLcbBufferStore_allocate_buffer(SNIP);
+    ASSERT_NE(msg, nullptr);
+
+    _build_snip_reply_payload(msg, 4, "TestMfg", "Model", "HW", "SW", 2, "User", "Desc");
+
+    char buffer[LEN_SNIP_NAME_BUFFER] = {0};
+    uint16_t result = ProtocolSnip_extract_name(msg, buffer, sizeof(buffer));
+
+    EXPECT_EQ(result, 8);  // 7 chars + null
+    EXPECT_STREQ(buffer, "TestMfg");
+}
+
+// ============================================================================
+// TEST: Extract Model
+// ============================================================================
+
+TEST(ProtocolSnip, extract_model)
+{
+    _reset_variables();
+    _global_initialize();
+
+    openlcb_msg_t *msg = OpenLcbBufferStore_allocate_buffer(SNIP);
+    ASSERT_NE(msg, nullptr);
+
+    _build_snip_reply_payload(msg, 4, "Mfg", "TestModel", "HW", "SW", 2, "User", "Desc");
+
+    char buffer[LEN_SNIP_MODEL_BUFFER] = {0};
+    uint16_t result = ProtocolSnip_extract_model(msg, buffer, sizeof(buffer));
+
+    EXPECT_EQ(result, 10);
+    EXPECT_STREQ(buffer, "TestModel");
+}
+
+// ============================================================================
+// TEST: Extract Hardware Version
+// ============================================================================
+
+TEST(ProtocolSnip, extract_hardware_version)
+{
+    _reset_variables();
+    _global_initialize();
+
+    openlcb_msg_t *msg = OpenLcbBufferStore_allocate_buffer(SNIP);
+    ASSERT_NE(msg, nullptr);
+
+    _build_snip_reply_payload(msg, 4, "Mfg", "Model", "HW 1.2.3", "SW", 2, "User", "Desc");
+
+    char buffer[LEN_SNIP_HARDWARE_VERSION_BUFFER] = {0};
+    uint16_t result = ProtocolSnip_extract_hardware_version(msg, buffer, sizeof(buffer));
+
+    EXPECT_EQ(result, 9);
+    EXPECT_STREQ(buffer, "HW 1.2.3");
+}
+
+// ============================================================================
+// TEST: Extract Software Version
+// ============================================================================
+
+TEST(ProtocolSnip, extract_software_version)
+{
+    _reset_variables();
+    _global_initialize();
+
+    openlcb_msg_t *msg = OpenLcbBufferStore_allocate_buffer(SNIP);
+    ASSERT_NE(msg, nullptr);
+
+    _build_snip_reply_payload(msg, 4, "Mfg", "Model", "HW", "SW 4.5", 2, "User", "Desc");
+
+    char buffer[LEN_SNIP_SOFTWARE_VERSION_BUFFER] = {0};
+    uint16_t result = ProtocolSnip_extract_software_version(msg, buffer, sizeof(buffer));
+
+    EXPECT_EQ(result, 7);
+    EXPECT_STREQ(buffer, "SW 4.5");
+}
+
+// ============================================================================
+// TEST: Extract User Version ID
+// ============================================================================
+
+TEST(ProtocolSnip, extract_user_version_id)
+{
+    _reset_variables();
+    _global_initialize();
+
+    openlcb_msg_t *msg = OpenLcbBufferStore_allocate_buffer(SNIP);
+    ASSERT_NE(msg, nullptr);
+
+    _build_snip_reply_payload(msg, 4, "Mfg", "Model", "HW", "SW", 2, "User", "Desc");
+
+    uint8_t version = 0;
+    uint16_t result = ProtocolSnip_extract_user_version_id(msg, &version);
+
+    EXPECT_EQ(result, 1);
+    EXPECT_EQ(version, 2);
+}
+
+// ============================================================================
+// TEST: Extract User Name
+// ============================================================================
+
+TEST(ProtocolSnip, extract_user_name)
+{
+    _reset_variables();
+    _global_initialize();
+
+    openlcb_msg_t *msg = OpenLcbBufferStore_allocate_buffer(SNIP);
+    ASSERT_NE(msg, nullptr);
+
+    _build_snip_reply_payload(msg, 4, "Mfg", "Model", "HW", "SW", 2, "DCC 33", "Long-haul mainline");
+
+    char buffer[LEN_SNIP_USER_NAME_BUFFER] = {0};
+    uint16_t result = ProtocolSnip_extract_user_name(msg, buffer, sizeof(buffer));
+
+    EXPECT_EQ(result, 7);
+    EXPECT_STREQ(buffer, "DCC 33");
+}
+
+// ============================================================================
+// TEST: Extract User Description
+// ============================================================================
+
+TEST(ProtocolSnip, extract_user_description)
+{
+    _reset_variables();
+    _global_initialize();
+
+    openlcb_msg_t *msg = OpenLcbBufferStore_allocate_buffer(SNIP);
+    ASSERT_NE(msg, nullptr);
+
+    _build_snip_reply_payload(msg, 4, "Mfg", "Model", "HW", "SW", 2, "DCC 33", "Long-haul mainline");
+
+    char buffer[LEN_SNIP_USER_DESCRIPTION_BUFFER] = {0};
+    uint16_t result = ProtocolSnip_extract_user_description(msg, buffer, sizeof(buffer));
+
+    EXPECT_EQ(result, 19);
+    EXPECT_STREQ(buffer, "Long-haul mainline");
+}
+
+// ============================================================================
+// TEST: Extract Truncates When Buffer Too Small
+// @details A 6-character source string into a 4-byte buffer should produce
+// a 3-char + null result (truncation, return 4).
+// ============================================================================
+
+TEST(ProtocolSnip, extract_truncates_when_buffer_too_small)
+{
+    _reset_variables();
+    _global_initialize();
+
+    openlcb_msg_t *msg = OpenLcbBufferStore_allocate_buffer(SNIP);
+    ASSERT_NE(msg, nullptr);
+
+    _build_snip_reply_payload(msg, 4, "TooLong", "Model", "HW", "SW", 2, "User", "Desc");
+
+    char buffer[4] = {'X', 'X', 'X', 'X'};  // pre-filled to detect under-write
+    uint16_t result = ProtocolSnip_extract_name(msg, buffer, sizeof(buffer));
+
+    EXPECT_EQ(result, 4);          // 3 chars + null
+    EXPECT_EQ(buffer[3], '\0');
+    EXPECT_EQ(strncmp(buffer, "Too", 3), 0);
+}
+
+// ============================================================================
+// TEST: Extract Handles Empty String
+// @details Empty string field should return 1 (just the null terminator).
+// ============================================================================
+
+TEST(ProtocolSnip, extract_handles_empty_string)
+{
+    _reset_variables();
+    _global_initialize();
+
+    openlcb_msg_t *msg = OpenLcbBufferStore_allocate_buffer(SNIP);
+    ASSERT_NE(msg, nullptr);
+
+    _build_snip_reply_payload(msg, 4, "", "Model", "HW", "SW", 2, "User", "Desc");
+
+    char buffer[16] = {'X'};
+    uint16_t result = ProtocolSnip_extract_name(msg, buffer, sizeof(buffer));
+
+    EXPECT_EQ(result, 1);
+    EXPECT_EQ(buffer[0], '\0');
+}
+
+// ============================================================================
+// TEST: Extract Roundtrip Through Loaders
+// @details Build a SNIP reply via the existing ProtocolSnip_load_* family,
+// then read every field back via ProtocolSnip_extract_* and confirm they
+// match.  This is the highest-value integration test: it exercises encode +
+// decode together against the real node parameters.
+// ============================================================================
+
+TEST(ProtocolSnip, extract_roundtrip_through_loaders)
+{
+    _reset_variables();
+    _global_initialize();
+
+    openlcb_node_t *node1 = OpenLcbNode_allocate(DEST_ID, &_node_parameters_main_node);
+    openlcb_msg_t *msg = OpenLcbBufferStore_allocate_buffer(SNIP);
+
+    ASSERT_NE(node1, nullptr);
+    ASSERT_NE(msg, nullptr);
+
+    config_read_type = 1;  // mock returns "Short" for user name + description
+    msg->mti = MTI_SIMPLE_NODE_INFO_REPLY;
+
+    uint16_t offset = 0;
+    offset = ProtocolSnip_load_manufacturer_version_id(node1, msg, offset, 1);
+    offset = ProtocolSnip_load_name(node1, msg, offset, LEN_SNIP_NAME_BUFFER - 1);
+    offset = ProtocolSnip_load_model(node1, msg, offset, LEN_SNIP_MODEL_BUFFER - 1);
+    offset = ProtocolSnip_load_hardware_version(node1, msg, offset, LEN_SNIP_HARDWARE_VERSION_BUFFER - 1);
+    offset = ProtocolSnip_load_software_version(node1, msg, offset, LEN_SNIP_SOFTWARE_VERSION_BUFFER - 1);
+    offset = ProtocolSnip_load_user_version_id(node1, msg, offset, 1);
+    offset = ProtocolSnip_load_user_name(node1, msg, offset, LEN_SNIP_USER_NAME_BUFFER - 1);
+    offset = ProtocolSnip_load_user_description(node1, msg, offset, LEN_SNIP_USER_DESCRIPTION_BUFFER - 1);
+
+    ASSERT_TRUE(ProtocolSnip_validate_snip_reply(msg));
+
+    uint8_t mfg_version = 0;
+    uint8_t user_version = 0;
+    char name[LEN_SNIP_NAME_BUFFER] = {0};
+    char model[LEN_SNIP_MODEL_BUFFER] = {0};
+    char hw_ver[LEN_SNIP_HARDWARE_VERSION_BUFFER] = {0};
+    char sw_ver[LEN_SNIP_SOFTWARE_VERSION_BUFFER] = {0};
+    char user_name[LEN_SNIP_USER_NAME_BUFFER] = {0};
+    char user_desc[LEN_SNIP_USER_DESCRIPTION_BUFFER] = {0};
+
+    EXPECT_EQ(ProtocolSnip_extract_manufacturer_version_id(msg, &mfg_version), 1);
+    EXPECT_EQ(mfg_version, 4);
+
+    ProtocolSnip_extract_name(msg, name, sizeof(name));
+    EXPECT_STREQ(name, SNIP_NAME_FULL);
+
+    ProtocolSnip_extract_model(msg, model, sizeof(model));
+    EXPECT_STREQ(model, SNIP_MODEL);
+
+    ProtocolSnip_extract_hardware_version(msg, hw_ver, sizeof(hw_ver));
+    EXPECT_STREQ(hw_ver, SNIP_HW_VERSION);
+
+    ProtocolSnip_extract_software_version(msg, sw_ver, sizeof(sw_ver));
+    EXPECT_STREQ(sw_ver, SNIP_SW_VERSION);
+
+    EXPECT_EQ(ProtocolSnip_extract_user_version_id(msg, &user_version), 1);
+    EXPECT_EQ(user_version, 2);
+
+    ProtocolSnip_extract_user_name(msg, user_name, sizeof(user_name));
+    EXPECT_STREQ(user_name, "Short");
+
+    ProtocolSnip_extract_user_description(msg, user_desc, sizeof(user_desc));
+    EXPECT_STREQ(user_desc, "Short");
 }
 
 // ============================================================================

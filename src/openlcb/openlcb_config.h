@@ -32,7 +32,7 @@
  * to bring up the entire stack.
  *
  * @author Jim Kueneman
- * @date 24 Apr 2026
+ * @date 28 Apr 2026
  */
 
 // This is a guard condition so that contents of this file are not included
@@ -367,6 +367,17 @@ typedef struct {
          *  callback.  Self matches are consumed by the duplicate-NodeID detection
          *  path and do NOT fire this callback. */
     void (*on_verified_node_id)(openlcb_node_t *openlcb_node, source_info_t *source);
+
+        /** @brief Simple Node Information reply received from a remote node. Optional.
+         *
+         *  @details Fires when this device receives an MTI_SIMPLE_NODE_INFO_REPLY
+         *  in response to a Simple Node Information request it sent.  The
+         *  @ref source_info_t parameter identifies the replier (48-bit NodeID
+         *  and 12-bit CAN alias).  The @ref openlcb_msg_t pointer is the raw
+         *  reply — use the ProtocolSnip_extract_* helpers to read individual
+         *  fields (manufacturer name, user name, etc.).  Both pointers are
+         *  only valid for the duration of the callback. */
+    void (*on_snip_reply)(source_info_t *source, openlcb_msg_t *incoming_msg);
 
         /** @brief 100ms periodic timer callback. Optional. */
     void (*on_100ms_timer)(void);

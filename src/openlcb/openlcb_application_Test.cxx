@@ -6,7 +6,7 @@
  *   Complete coverage with verified API calls
  *
  * Author: Test Suite
- * Date: 2026-01-19
+ * Date: 2026-04-28
  * Version: 3.0 - Production Ready with 100% Coverage
  ******************************************************************************/
 
@@ -44,7 +44,8 @@ typedef enum
     SEND_MSG_PC_REPORT,
     SEND_MSG_TEACH,
     SEND_MSG_INIT,
-    SEND_MSG_CLOCK
+    SEND_MSG_CLOCK,
+    SEND_MSG_SNIP_REQUEST
 } send_msg_enum_t;
 
 node_parameters_t _node_parameters_main_node = {
@@ -175,6 +176,15 @@ bool _transmit_openlcb_message(openlcb_msg_t *openlcb_msg)
         last_sent_mti = openlcb_msg->mti;
         last_sent_event_id = OpenLcbUtilities_extract_event_id_from_openlcb_payload(openlcb_msg);
         clock_msg_send_count++;
+        break;
+
+    case SEND_MSG_SNIP_REQUEST:
+        EXPECT_EQ(openlcb_msg->mti, MTI_SIMPLE_NODE_INFO_REQUEST);
+        EXPECT_EQ(openlcb_msg->payload_count, 0);
+        EXPECT_EQ(openlcb_msg->dest_alias, SOURCE_ALIAS);
+        EXPECT_EQ(openlcb_msg->dest_id, SOURCE_ID);
+        EXPECT_EQ(openlcb_msg->source_alias, DEST_ALIAS);
+        EXPECT_EQ(openlcb_msg->source_id, DEST_ID);
         break;
     }
 
@@ -457,6 +467,35 @@ TEST(OpenLcbApplication, send_initialization_event)
     node2->alias = DEST_ALIAS;
     
     EXPECT_FALSE(OpenLcbApplication_send_initialization_event(node2));
+}
+
+TEST(OpenLcbApplication, send_simple_node_info_request)
+{
+    _reset_variables();
+    _global_initialize();
+
+    openlcb_node_t *node1 = OpenLcbNode_allocate(DEST_ID, &_node_parameters_main_node);
+    node1->alias = DEST_ALIAS;
+
+    EXPECT_NE(node1, nullptr);
+
+    send_msg_enum = SEND_MSG_SNIP_REQUEST;
+
+    EXPECT_TRUE(OpenLcbApplication_send_simple_node_info_request(node1, SOURCE_ALIAS, SOURCE_ID));
+
+    // Transmit-fail propagates
+    fail_transmit_openlcb_msg = true;
+    EXPECT_FALSE(OpenLcbApplication_send_simple_node_info_request(node1, SOURCE_ALIAS, SOURCE_ID));
+    fail_transmit_openlcb_msg = false;
+
+    // NULL send_openlcb_msg returns false
+    _reset_variables();
+    _global_initialize_nulls();
+
+    openlcb_node_t *node2 = OpenLcbNode_allocate(DEST_ID, &_node_parameters_main_node);
+    node2->alias = DEST_ALIAS;
+
+    EXPECT_FALSE(OpenLcbApplication_send_simple_node_info_request(node2, SOURCE_ALIAS, SOURCE_ID));
 }
 
 /*******************************************************************************

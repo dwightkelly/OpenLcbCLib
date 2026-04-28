@@ -32,7 +32,7 @@
  * Module_initialize() functions in the correct order.
  *
  * @author Jim Kueneman
- * @date 24 Apr 2026
+ * @date 28 Apr 2026
  */
 
 #include "openlcb_config.h"
@@ -835,6 +835,8 @@ static void _build_snip(void) {
 #ifdef OPENLCB_COMPILE_MEMORY_CONFIGURATION
     _snip.config_memory_read = _config->config_mem_read;
 #endif
+
+    _snip.on_snip_reply = _config->on_snip_reply;
 
 }
 

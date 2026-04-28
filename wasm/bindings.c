@@ -52,6 +52,7 @@
 #include "openlcb/openlcb_float16.h"
 #ifdef OPENLCB_COMPILE_BROADCAST_TIME
 #include "openlcb/protocol_broadcast_time_handler.h"
+#include "openlcb/protocol_snip.h"
 #endif
 #if defined(OPENLCB_COMPILE_TRAIN) && defined(OPENLCB_COMPILE_TRAIN_SEARCH)
 #include "openlcb/protocol_train_search_handler.h"
@@ -749,6 +750,27 @@ static void _on_verified_node_id(openlcb_node_t *node, source_info_t *source)
        (int) source->source_alias);
 }
 
+// Throttle/roster-side hook — fires when a remote node returns a SNIP
+// reply we asked for.  The msg pointer is valid only for the duration of
+// the callback; JS reads fields via Module.snipExtract* helpers (built on
+// wasm_snip_extract_* exports) before returning.
+static void _on_snip_reply(source_info_t *source, openlcb_msg_t *incoming_msg)
+{
+
+    if (source == NULL || incoming_msg == NULL) { return; }
+    EM_ASM({
+        if (Module.onSnipReply) {
+            var sid = BigInt($0 >>> 0) | (BigInt($1 >>> 0) << 32n);
+            var alias = $2 & 0xFFF;
+            var msgPtr = $3 >>> 0;
+            Module.onSnipReply(sid, alias, msgPtr);
+        }
+    }, (uint32_t) (source->source_id & 0xFFFFFFFFu),
+       (uint32_t) ((source->source_id >> 32) & 0xFFFFu),
+       (int) source->source_alias,
+       (uint32_t) (uintptr_t) incoming_msg);
+}
+
 static void _on_100ms_timer(void)
 {
 
@@ -870,6 +892,7 @@ static const openlcb_config_t _openlcb_config = {
     .on_optional_interaction_rejected = &_on_optional_interaction_rejected,
     .on_terminate_due_to_error        = &_on_terminate_due_to_error,
     .on_verified_node_id              = &_on_verified_node_id,
+    .on_snip_reply                    = &_on_snip_reply,
     .on_100ms_timer                   = &_on_100ms_timer,
     .on_login_complete       = &_on_login_complete,
 #ifdef OPENLCB_COMPILE_EVENTS
@@ -1248,6 +1271,91 @@ int32_t wasm_send_verify_node_id_global(uint64_t node_id)
     openlcb_node_t *node = OpenLcbNode_find_by_node_id(node_id);
     if (node == NULL) { return WASM_ERR_UNKNOWN_NODE; }
     return OpenLcbApplication_send_verify_node_id_global(node) ? WASM_OK : WASM_ERR_TX_BUSY;
+}
+
+// Send Simple Node Information Request to a remote alias.  Reply (if any)
+// fires Module.onSnipReply with the source NodeID/alias and a msg pointer
+// the JS layer reads via Module.snipExtract* helpers.
+EMSCRIPTEN_KEEPALIVE
+int32_t wasm_send_simple_node_info_request(uint64_t node_id, uint32_t dest_alias, uint64_t dest_node_id)
+{
+
+    openlcb_node_t *node = OpenLcbNode_find_by_node_id(node_id);
+    if (node == NULL) { return WASM_ERR_UNKNOWN_NODE; }
+    return OpenLcbApplication_send_simple_node_info_request(node, (uint16_t) dest_alias, dest_node_id) ? WASM_OK : WASM_ERR_TX_BUSY;
+}
+
+// ---- SNIP reply field extractors (callable inside Module.onSnipReply) ----
+//
+// All take a msg_ptr supplied by the on_snip_reply callback.  The pointer
+// is valid only for the duration of that callback — JS must finish
+// extracting before returning from onSnipReply.
+
+// Returns the byte value (0..255) or -1 on failure.
+EMSCRIPTEN_KEEPALIVE
+int32_t wasm_snip_extract_manufacturer_version_id(uint32_t msg_ptr)
+{
+
+    uint8_t out = 0;
+    if (ProtocolSnip_extract_manufacturer_version_id((openlcb_msg_t *) (uintptr_t) msg_ptr, &out) == 0) {
+        return -1;
+    }
+    return (int32_t) out;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int32_t wasm_snip_extract_user_version_id(uint32_t msg_ptr)
+{
+
+    uint8_t out = 0;
+    if (ProtocolSnip_extract_user_version_id((openlcb_msg_t *) (uintptr_t) msg_ptr, &out) == 0) {
+        return -1;
+    }
+    return (int32_t) out;
+}
+
+// String extractors: caller supplies an out_buffer pointer + size.  Returns
+// bytes written (including the terminating null).
+EMSCRIPTEN_KEEPALIVE
+int32_t wasm_snip_extract_name(uint32_t msg_ptr, uint32_t out_buffer, uint32_t max_bytes)
+{
+
+    return (int32_t) ProtocolSnip_extract_name((openlcb_msg_t *) (uintptr_t) msg_ptr, (char *) (uintptr_t) out_buffer, (uint16_t) max_bytes);
+}
+
+EMSCRIPTEN_KEEPALIVE
+int32_t wasm_snip_extract_model(uint32_t msg_ptr, uint32_t out_buffer, uint32_t max_bytes)
+{
+
+    return (int32_t) ProtocolSnip_extract_model((openlcb_msg_t *) (uintptr_t) msg_ptr, (char *) (uintptr_t) out_buffer, (uint16_t) max_bytes);
+}
+
+EMSCRIPTEN_KEEPALIVE
+int32_t wasm_snip_extract_hardware_version(uint32_t msg_ptr, uint32_t out_buffer, uint32_t max_bytes)
+{
+
+    return (int32_t) ProtocolSnip_extract_hardware_version((openlcb_msg_t *) (uintptr_t) msg_ptr, (char *) (uintptr_t) out_buffer, (uint16_t) max_bytes);
+}
+
+EMSCRIPTEN_KEEPALIVE
+int32_t wasm_snip_extract_software_version(uint32_t msg_ptr, uint32_t out_buffer, uint32_t max_bytes)
+{
+
+    return (int32_t) ProtocolSnip_extract_software_version((openlcb_msg_t *) (uintptr_t) msg_ptr, (char *) (uintptr_t) out_buffer, (uint16_t) max_bytes);
+}
+
+EMSCRIPTEN_KEEPALIVE
+int32_t wasm_snip_extract_user_name(uint32_t msg_ptr, uint32_t out_buffer, uint32_t max_bytes)
+{
+
+    return (int32_t) ProtocolSnip_extract_user_name((openlcb_msg_t *) (uintptr_t) msg_ptr, (char *) (uintptr_t) out_buffer, (uint16_t) max_bytes);
+}
+
+EMSCRIPTEN_KEEPALIVE
+int32_t wasm_snip_extract_user_description(uint32_t msg_ptr, uint32_t out_buffer, uint32_t max_bytes)
+{
+
+    return (int32_t) ProtocolSnip_extract_user_description((openlcb_msg_t *) (uintptr_t) msg_ptr, (char *) (uintptr_t) out_buffer, (uint16_t) max_bytes);
 }
 
 EMSCRIPTEN_KEEPALIVE
