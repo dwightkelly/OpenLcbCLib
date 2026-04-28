@@ -928,6 +928,7 @@ TEST(ApplicationTrain, heartbeat_sends_request_at_halfway)
     state->heartbeat_timeout_s = 10;
     state->heartbeat_counter_100ms = 100;
     state->controller_node_id = TEST_CONTROLLER_NODE_ID;
+    state->set_speed = 0x3C00;
 
     // Tick 50 times to reach halfway (100 - 50 = 50 = halfway of 10s * 10 / 2)
     for (int i = 0; i < 50; i++) {
@@ -943,10 +944,10 @@ TEST(ApplicationTrain, heartbeat_sends_request_at_halfway)
     EXPECT_EQ(last_sent_msg.source_id, TEST_DEST_ID);
     EXPECT_EQ(last_sent_payload[0], TRAIN_MANAGEMENT);
     EXPECT_EQ(last_sent_payload[1], TRAIN_MGMT_NOOP);
-    // 3-byte timeout: 10 seconds = 0x00, 0x00, 0x0A
+    // 3-byte deadline: remaining time at halfway = 5 seconds = 0x00, 0x00, 0x05
     EXPECT_EQ(last_sent_payload[2], 0x00);
     EXPECT_EQ(last_sent_payload[3], 0x00);
-    EXPECT_EQ(last_sent_payload[4], 0x0A);
+    EXPECT_EQ(last_sent_payload[4], 0x05);
 
 }
 
@@ -1652,6 +1653,7 @@ TEST(ApplicationTrain, heartbeat_send_retries_on_failure)
     state->heartbeat_timeout_s = 10;
     state->heartbeat_counter_100ms = 100;
     state->controller_node_id = TEST_CONTROLLER_NODE_ID;
+    state->set_speed = 0x3C00;
 
     // Make send fail
     fail_send = true;
