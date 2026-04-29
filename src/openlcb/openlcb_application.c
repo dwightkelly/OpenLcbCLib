@@ -273,7 +273,7 @@ void OpenLcbApplication_clear_producer_ranges(openlcb_node_t *openlcb_node) {
      * @verbatim
      * @param openlcb_node    Pointer to the openlcb_node_t receiving the registration.
      * @param event_id_base   Base event_id_t of the range.
-     * @param range_size      Number of consecutive event IDs (event_range_count_enum).
+     * @param range_size      Exponent N from event_range_count_enum; range covers 2^N consecutive event IDs.
      * @endverbatim
      *
      * @return true if registered successfully, false if the range array is full.
@@ -309,7 +309,7 @@ bool OpenLcbApplication_register_consumer_range(openlcb_node_t *openlcb_node, ev
      * @verbatim
      * @param openlcb_node    Pointer to the openlcb_node_t receiving the registration.
      * @param event_id_base   Base event_id_t of the range.
-     * @param range_size      Number of consecutive event IDs (event_range_count_enum).
+     * @param range_size      Exponent N from event_range_count_enum; range covers 2^N consecutive event IDs.
      * @endverbatim
      *
      * @return true if registered successfully, false if the range array is full.

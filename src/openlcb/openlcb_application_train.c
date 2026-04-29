@@ -393,7 +393,14 @@ void OpenLcbApplicationTrain_100ms_timer_tick(uint8_t current_tick) {
 
         }
 
-        if (state->heartbeat_counter_100ms == 0 && old_counter > 0) {
+        // TrainControlS §6.6: heartbeat protects a moving train from a
+        // silent controller.  A stopped train has nothing to runaway-protect,
+        // so do not fire the timeout when set_speed is zero — same gate as
+        // the halfway request-send above.  Without this, a freshly-allocated
+        // train (counter armed at controller-assign, speed still zero) would
+        // count down for heartbeat_timeout_s and spuriously fire the callback
+        // even though the train never sent a Heartbeat Request to anyone.
+        if (state->heartbeat_counter_100ms == 0 && old_counter > 0 && !speed_is_zero) {
 
             state->estop_active = true;
 

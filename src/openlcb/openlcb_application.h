@@ -213,7 +213,7 @@ extern "C" {
          *
          * @param openlcb_node    Pointer to the @ref openlcb_node_t receiving the registration.
          * @param event_id_base   Base @ref event_id_t of the range.
-         * @param range_size      Number of consecutive event IDs in the range (@ref event_range_count_enum).
+         * @param range_size      Exponent N from @ref event_range_count_enum; range covers 2^N consecutive event IDs.
          *
          * @return true if registered successfully, false if the range array is full.
          *
@@ -229,7 +229,7 @@ extern "C" {
          *
          * @param openlcb_node    Pointer to the @ref openlcb_node_t receiving the registration.
          * @param event_id_base   Base @ref event_id_t of the range.
-         * @param range_size      Number of consecutive event IDs in the range (@ref event_range_count_enum).
+         * @param range_size      Exponent N from @ref event_range_count_enum; range covers 2^N consecutive event IDs.
          *
          * @return true if registered successfully, false if the range array is full.
          *

@@ -812,6 +812,7 @@ TEST(ApplicationTrain, heartbeat_timer_countdown)
     // Set heartbeat: 3 seconds = 30 ticks of 100ms
     state->heartbeat_timeout_s = 3;
     state->heartbeat_counter_100ms = 30;
+    state->set_speed = 0x3C00;  // Forward 1.0 — heartbeat only protects a moving train
 
     // Tick 29 times — should not timeout
     for (int i = 0; i < 29; i++) {
