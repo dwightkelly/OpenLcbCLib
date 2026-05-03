@@ -1332,6 +1332,361 @@ TEST(BroadcastTimeApp, send_date_rollover_no_producer_returns_true)
 
 
 // ============================================================================
+// Section 6b: Producer-side send_* contract — broadcast-only, no side effects
+// ----------------------------------------------------------------------------
+// After the producer-callback revert, send_* functions must be pure
+// broadcasters: they put the wire frame on the bus and do nothing else.
+// They must NOT mirror the passed value into local clock state, and they
+// must NOT fire the on_*_received / on_clock_started / on_clock_stopped
+// callbacks on the application interface.  These tests are regression
+// guards — if the state-mirror or callback-fire pattern leaks back in,
+// the double-fire bug returns and these tests catch it.
+// ============================================================================
+
+TEST(BroadcastTimeApp, send_report_time_does_not_mutate_state_or_fire_callback)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_producer(
+        node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    clock_state->time.hour   = 9;
+    clock_state->time.minute = 5;
+    clock_state->time.valid  = false;
+
+    EXPECT_TRUE(OpenLcbApplicationBroadcastTime_send_report_time(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, 14, 30));
+
+    // State must be untouched — caller decides when to update local state.
+    EXPECT_EQ(clock_state->time.hour, 9);
+    EXPECT_EQ(clock_state->time.minute, 5);
+    EXPECT_FALSE(clock_state->time.valid);
+    EXPECT_FALSE(callback_time_received);
+    // But the wire frame WAS emitted with the passed values.
+    EXPECT_EQ(last_sent_mti, MTI_PC_EVENT_REPORT);
+    EXPECT_EQ(last_sent_event_id,
+              ProtocolBroadcastTimeHandler_create_time_event_id(BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, 14, 30, false));
+
+}
+
+TEST(BroadcastTimeApp, send_report_date_does_not_mutate_state_or_fire_callback)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_producer(
+        node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    clock_state->date.month = 1;
+    clock_state->date.day   = 1;
+    clock_state->date.valid = false;
+
+    EXPECT_TRUE(OpenLcbApplicationBroadcastTime_send_report_date(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, 6, 15));
+
+    EXPECT_EQ(clock_state->date.month, 1);
+    EXPECT_EQ(clock_state->date.day, 1);
+    EXPECT_FALSE(clock_state->date.valid);
+    EXPECT_FALSE(callback_date_received);
+    EXPECT_EQ(last_sent_mti, MTI_PC_EVENT_REPORT);
+
+}
+
+TEST(BroadcastTimeApp, send_report_year_does_not_mutate_state_or_fire_callback)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_producer(
+        node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    clock_state->year.year  = 2000;
+    clock_state->year.valid = false;
+
+    EXPECT_TRUE(OpenLcbApplicationBroadcastTime_send_report_year(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, 2026));
+
+    EXPECT_EQ(clock_state->year.year, 2000);
+    EXPECT_FALSE(clock_state->year.valid);
+    EXPECT_FALSE(callback_year_received);
+    EXPECT_EQ(last_sent_mti, MTI_PC_EVENT_REPORT);
+
+}
+
+TEST(BroadcastTimeApp, send_report_rate_does_not_mutate_state_or_reset_accumulator)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_producer(
+        node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    clock_state->rate.rate      = 4;
+    clock_state->rate.valid     = false;
+    clock_state->ms_accumulator = 12345;
+
+    EXPECT_TRUE(OpenLcbApplicationBroadcastTime_send_report_rate(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, 0x0010));
+
+    EXPECT_EQ(clock_state->rate.rate, 4);
+    EXPECT_FALSE(clock_state->rate.valid);
+    // Specifically: ms_accumulator must NOT be cleared — that would
+    // re-zero a running clock's intra-minute progress on every send.
+    EXPECT_EQ(clock_state->ms_accumulator, 12345u);
+    EXPECT_EQ(last_sent_mti, MTI_PC_EVENT_REPORT);
+
+}
+
+TEST(BroadcastTimeApp, send_start_does_not_mutate_running_state)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_producer(
+        node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    ASSERT_FALSE(clock_state->is_running);
+
+    EXPECT_TRUE(OpenLcbApplicationBroadcastTime_send_start(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK));
+
+    // Local is_running stays false until a Start event is received off
+    // the bus (loopback or remote).  send_start is broadcast-only.
+    EXPECT_FALSE(clock_state->is_running);
+    EXPECT_EQ(last_sent_mti, MTI_PC_EVENT_REPORT);
+
+}
+
+TEST(BroadcastTimeApp, send_stop_does_not_mutate_running_state)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_producer(
+        node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    clock_state->is_running = true;
+
+    EXPECT_TRUE(OpenLcbApplicationBroadcastTime_send_stop(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK));
+
+    EXPECT_TRUE(clock_state->is_running);
+    EXPECT_EQ(last_sent_mti, MTI_PC_EVENT_REPORT);
+
+}
+
+TEST(BroadcastTimeApp, send_date_rollover_does_not_fire_callback)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    OpenLcbApplicationBroadcastTime_setup_producer(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+
+    EXPECT_TRUE(OpenLcbApplicationBroadcastTime_send_date_rollover(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK));
+
+    EXPECT_FALSE(callback_date_rollover);
+    EXPECT_EQ(last_sent_mti, MTI_PC_EVENT_REPORT);
+
+}
+
+
+// ============================================================================
+// Section 6c: §6.5 Set Time/Date/Year/Rate echo tests
+// ----------------------------------------------------------------------------
+// Per OpenLCB Broadcast Time Standard §6.5, when a producer receives a Set
+// event for Time/Date/Year/Rate, it must make the change effective and
+// produce the corresponding effective Report event immediately.  Start/Stop
+// are NOT in the spec's Report-response list — they only get the 3-second
+// §6.3 sync burst.  These tests verify the immediate Report echo for the
+// four mandated cases and the absence of an echo for Start/Stop.
+// ============================================================================
+
+TEST(BroadcastTimeApp, receive_set_time_emits_report_time_echo)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    OpenLcbApplicationBroadcastTime_setup_producer(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+
+    openlcb_statemachine_info_t info;
+    memset(&info, 0, sizeof(info));
+    info.openlcb_node = node;
+
+    // Inbound Set Time 14:30 (byte 6 = 0x8E, "set" flag)
+    event_id_t set_time = ProtocolBroadcastTimeHandler_create_time_event_id(
+        BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, 14, 30, true);
+
+    ProtocolBroadcastTimeHandler_handle_time_event(&info, set_time);
+
+    // Echo must be Report Time (not Set Time) — different event-ID family.
+    event_id_t expected_report = ProtocolBroadcastTimeHandler_create_time_event_id(
+        BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, 14, 30, false);
+    EXPECT_EQ(last_sent_mti, MTI_PC_EVENT_REPORT);
+    EXPECT_EQ(last_sent_event_id, expected_report);
+
+}
+
+TEST(BroadcastTimeApp, receive_set_date_emits_report_date_echo)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    OpenLcbApplicationBroadcastTime_setup_producer(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+
+    openlcb_statemachine_info_t info;
+    memset(&info, 0, sizeof(info));
+    info.openlcb_node = node;
+
+    event_id_t set_date = ProtocolBroadcastTimeHandler_create_date_event_id(
+        BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, 6, 15, true);
+
+    ProtocolBroadcastTimeHandler_handle_time_event(&info, set_date);
+
+    event_id_t expected_report = ProtocolBroadcastTimeHandler_create_date_event_id(
+        BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, 6, 15, false);
+    EXPECT_EQ(last_sent_mti, MTI_PC_EVENT_REPORT);
+    EXPECT_EQ(last_sent_event_id, expected_report);
+
+}
+
+TEST(BroadcastTimeApp, receive_set_year_emits_report_year_echo)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    OpenLcbApplicationBroadcastTime_setup_producer(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+
+    openlcb_statemachine_info_t info;
+    memset(&info, 0, sizeof(info));
+    info.openlcb_node = node;
+
+    event_id_t set_year = ProtocolBroadcastTimeHandler_create_year_event_id(
+        BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, 2026, true);
+
+    ProtocolBroadcastTimeHandler_handle_time_event(&info, set_year);
+
+    event_id_t expected_report = ProtocolBroadcastTimeHandler_create_year_event_id(
+        BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, 2026, false);
+    EXPECT_EQ(last_sent_mti, MTI_PC_EVENT_REPORT);
+    EXPECT_EQ(last_sent_event_id, expected_report);
+
+}
+
+TEST(BroadcastTimeApp, receive_set_rate_emits_report_rate_echo)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    OpenLcbApplicationBroadcastTime_setup_producer(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+
+    openlcb_statemachine_info_t info;
+    memset(&info, 0, sizeof(info));
+    info.openlcb_node = node;
+
+    event_id_t set_rate = ProtocolBroadcastTimeHandler_create_rate_event_id(
+        BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, 0x0010, true);
+
+    ProtocolBroadcastTimeHandler_handle_time_event(&info, set_rate);
+
+    event_id_t expected_report = ProtocolBroadcastTimeHandler_create_rate_event_id(
+        BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, 0x0010, false);
+    EXPECT_EQ(last_sent_mti, MTI_PC_EVENT_REPORT);
+    EXPECT_EQ(last_sent_event_id, expected_report);
+
+}
+
+TEST(BroadcastTimeApp, receive_cmd_start_does_not_emit_report_echo)
+{
+
+    // §6.5 strict reading: Start/Stop trigger the state change + 3-sec sync
+    // burst, but the spec's Report-response list (Rate/Year/Date/Time) does
+    // NOT include a Start/Stop counterpart.  The producer must NOT
+    // re-broadcast Start as a PCER on receive.
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    OpenLcbApplicationBroadcastTime_setup_producer(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+
+    openlcb_statemachine_info_t info;
+    memset(&info, 0, sizeof(info));
+    info.openlcb_node = node;
+
+    event_id_t cmd_start = ProtocolBroadcastTimeHandler_create_command_event_id(
+        BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, BROADCAST_TIME_EVENT_START);
+
+    ProtocolBroadcastTimeHandler_handle_time_event(&info, cmd_start);
+
+    // No outbound frame from the dispatch.  The 3-sec sync burst arms in
+    // sync_delay_ticks but won't fire until the time tick advances — that's
+    // a separate path tested elsewhere.
+    EXPECT_EQ(send_count, 0);
+
+}
+
+TEST(BroadcastTimeApp, receive_cmd_stop_does_not_emit_report_echo)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_producer(
+        node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    clock_state->is_running = true;
+
+    openlcb_statemachine_info_t info;
+    memset(&info, 0, sizeof(info));
+    info.openlcb_node = node;
+
+    event_id_t cmd_stop = ProtocolBroadcastTimeHandler_create_command_event_id(
+        BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, BROADCAST_TIME_EVENT_STOP);
+
+    ProtocolBroadcastTimeHandler_handle_time_event(&info, cmd_stop);
+
+    EXPECT_EQ(send_count, 0);
+
+}
+
+
+// ============================================================================
 // Section 7: Consumer Send Function Tests
 // ============================================================================
 

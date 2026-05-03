@@ -284,6 +284,10 @@ void ProtocolBroadcastTimeHandler_handle_time_event(openlcb_statemachine_info_t 
             if (OpenLcbApplicationBroadcastTime_is_producer(clock_id)) {
 
                 _handle_report_date(node, clock, event_id);
+
+                // §6.5: produce the effective Report Date PCER immediately
+                OpenLcbApplicationBroadcastTime_send_report_date(node, clock_id, clock->date.month, clock->date.day);
+
                 OpenLcbApplicationBroadcastTime_trigger_sync_delay(clock_id);
 
             }
@@ -293,6 +297,10 @@ void ProtocolBroadcastTimeHandler_handle_time_event(openlcb_statemachine_info_t 
             if (OpenLcbApplicationBroadcastTime_is_producer(clock_id)) {
 
                 _handle_report_year(node, clock, event_id);
+
+                // §6.5: produce the effective Report Year PCER immediately
+                OpenLcbApplicationBroadcastTime_send_report_year(node, clock_id, clock->year.year);
+
                 OpenLcbApplicationBroadcastTime_trigger_sync_delay(clock_id);
 
             }
@@ -302,6 +310,10 @@ void ProtocolBroadcastTimeHandler_handle_time_event(openlcb_statemachine_info_t 
             if (OpenLcbApplicationBroadcastTime_is_producer(clock_id)) {
 
                 _handle_report_rate(node, clock, event_id);
+
+                // §6.5: produce the effective Report Rate PCER immediately
+                OpenLcbApplicationBroadcastTime_send_report_rate(node, clock_id, clock->rate.rate);
+
                 OpenLcbApplicationBroadcastTime_trigger_sync_delay(clock_id);
 
             }
