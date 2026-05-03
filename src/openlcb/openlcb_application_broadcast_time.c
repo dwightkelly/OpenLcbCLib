@@ -269,7 +269,10 @@ broadcast_clock_state_t *OpenLcbApplicationBroadcastTime_setup_producer(openlcb_
      *
      * @details Algorithm:
      * -# Find the clock slot for clock_id; if not found, return immediately.
+     * -# If state.is_running was already true, return — no transition.
      * -# Set state.is_running = true.
+     * -# Fire on_clock_started so listeners observe the transition the same
+     *    way they would for a Start event arriving from the bus.
      *
      * @verbatim
      * @param clock_id  64-bit event_id_t identifying the clock.
@@ -285,7 +288,19 @@ void OpenLcbApplicationBroadcastTime_start(event_id_t clock_id) {
 
     }
 
+    if (broadcast_clock->state.is_running) {
+
+        return;
+
+    }
+
     broadcast_clock->state.is_running = true;
+
+    if (_interface && _interface->on_clock_started) {
+
+        _interface->on_clock_started((openlcb_node_t *) broadcast_clock->producer_node, &broadcast_clock->state);
+
+    }
 
 }
 
@@ -294,7 +309,10 @@ void OpenLcbApplicationBroadcastTime_start(event_id_t clock_id) {
      *
      * @details Algorithm:
      * -# Find the clock slot for clock_id; if not found, return immediately.
+     * -# If state.is_running was already false, return — no transition.
      * -# Set state.is_running = false.
+     * -# Fire on_clock_stopped so listeners observe the transition the same
+     *    way they would for a Stop event arriving from the bus.
      *
      * @verbatim
      * @param clock_id  64-bit event_id_t identifying the clock.
@@ -310,7 +328,19 @@ void OpenLcbApplicationBroadcastTime_stop(event_id_t clock_id) {
 
     }
 
+    if (!broadcast_clock->state.is_running) {
+
+        return;
+
+    }
+
     broadcast_clock->state.is_running = false;
+
+    if (_interface && _interface->on_clock_stopped) {
+
+        _interface->on_clock_stopped((openlcb_node_t *) broadcast_clock->producer_node, &broadcast_clock->state);
+
+    }
 
 }
 
@@ -850,6 +880,18 @@ bool OpenLcbApplicationBroadcastTime_send_report_time(openlcb_node_t *openlcb_no
 
         if (clock->is_allocated && clock->is_producer && clock->producer_node) {
 
+            // Sync local state to the value we're about to broadcast and
+            // notify listeners — same callback the receive path fires.
+            clock->state.time.hour   = hour;
+            clock->state.time.minute = minute;
+            clock->state.time.valid  = true;
+
+            if (_interface && _interface->on_time_received) {
+
+                _interface->on_time_received(openlcb_node, &clock->state);
+
+            }
+
             event_id_t event_id = ProtocolBroadcastTimeHandler_create_time_event_id(clock->state.clock_id, hour, minute, false);
 
             return OpenLcbApplication_send_event_pc_report(openlcb_node, event_id);
@@ -886,6 +928,16 @@ bool OpenLcbApplicationBroadcastTime_send_report_date(openlcb_node_t *openlcb_no
 
         if (clock->is_allocated && clock->is_producer && clock->producer_node) {
 
+            clock->state.date.month = month;
+            clock->state.date.day   = day;
+            clock->state.date.valid = true;
+
+            if (_interface && _interface->on_date_received) {
+
+                _interface->on_date_received(openlcb_node, &clock->state);
+
+            }
+
             event_id_t event_id = ProtocolBroadcastTimeHandler_create_date_event_id(clock->state.clock_id, month, day, false);
 
             return OpenLcbApplication_send_event_pc_report(openlcb_node, event_id);
@@ -920,6 +972,15 @@ bool OpenLcbApplicationBroadcastTime_send_report_year(openlcb_node_t *openlcb_no
     if (clock) {
 
         if (clock->is_allocated && clock->is_producer && clock->producer_node) {
+
+            clock->state.year.year  = year;
+            clock->state.year.valid = true;
+
+            if (_interface && _interface->on_year_received) {
+
+                _interface->on_year_received(openlcb_node, &clock->state);
+
+            }
 
             event_id_t event_id = ProtocolBroadcastTimeHandler_create_year_event_id(clock->state.clock_id, year, false);
 
@@ -956,6 +1017,16 @@ bool OpenLcbApplicationBroadcastTime_send_report_rate(openlcb_node_t *openlcb_no
 
         if (clock->is_allocated && clock->is_producer && clock->producer_node) {
 
+            clock->state.rate.rate  = rate;
+            clock->state.rate.valid = true;
+            clock->state.ms_accumulator = 0;
+
+            if (_interface && _interface->on_rate_received) {
+
+                _interface->on_rate_received(openlcb_node, &clock->state);
+
+            }
+
             event_id_t event_id = ProtocolBroadcastTimeHandler_create_rate_event_id(clock->state.clock_id, rate, false);
 
             return OpenLcbApplication_send_event_pc_report(openlcb_node, event_id);
@@ -989,6 +1060,22 @@ bool OpenLcbApplicationBroadcastTime_send_start(openlcb_node_t *openlcb_node, ev
     if (clock) {
 
         if (clock->is_allocated && clock->is_producer && clock->producer_node) {
+
+            // Local state transition + callback (edge-detected) so listeners
+            // observe the change identically whether triggered locally or by
+            // an inbound Start event.
+            if (!clock->state.is_running) {
+
+                clock->state.is_running = true;
+                clock->state.ms_accumulator = 0;
+
+                if (_interface && _interface->on_clock_started) {
+
+                    _interface->on_clock_started(openlcb_node, &clock->state);
+
+                }
+
+            }
 
             event_id_t event_id = ProtocolBroadcastTimeHandler_create_command_event_id(clock->state.clock_id, BROADCAST_TIME_EVENT_START);
 
@@ -1024,6 +1111,18 @@ bool OpenLcbApplicationBroadcastTime_send_stop(openlcb_node_t *openlcb_node, eve
 
         if (clock->is_allocated && clock->is_producer && clock->producer_node) {
 
+            if (clock->state.is_running) {
+
+                clock->state.is_running = false;
+
+                if (_interface && _interface->on_clock_stopped) {
+
+                    _interface->on_clock_stopped(openlcb_node, &clock->state);
+
+                }
+
+            }
+
             event_id_t event_id = ProtocolBroadcastTimeHandler_create_command_event_id(clock->state.clock_id, BROADCAST_TIME_EVENT_STOP);
 
             return OpenLcbApplication_send_event_pc_report(openlcb_node, event_id);
@@ -1057,6 +1156,15 @@ bool OpenLcbApplicationBroadcastTime_send_date_rollover(openlcb_node_t *openlcb_
     if (clock) {
 
         if (clock->is_allocated && clock->is_producer && clock->producer_node) {
+
+            // Notify listeners that a rollover is being announced.  No state
+            // change to track here — date_rollover is a notification event,
+            // not a value carrier.
+            if (_interface && _interface->on_date_rollover) {
+
+                _interface->on_date_rollover(openlcb_node, &clock->state);
+
+            }
 
             event_id_t event_id = ProtocolBroadcastTimeHandler_create_command_event_id(clock->state.clock_id, BROADCAST_TIME_EVENT_DATE_ROLLOVER);
 

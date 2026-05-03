@@ -558,6 +558,131 @@ TEST(BroadcastTime, extract_rate_null_pointer)
 
 }
 
+// Non-rate events must be rejected. The 12-bit rate field can take any
+// value, so extract_rate cannot disambiguate by value the way
+// extract_time/date/year do — it must inspect byte 6's upper nibble and
+// return false for anything other than 0x4 (Report Rate) or 0xC (Set Rate).
+TEST(BroadcastTime, extract_rate_rejects_report_time)
+{
+
+    // Report Time 14:30 = 0x0E1E (byte 6 = 0x0)
+    event_id_t event_id = BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK | 0x0E1E;
+
+    int16_t rate = 0x5A5A;
+
+    EXPECT_FALSE(ProtocolBroadcastTimeHandler_extract_rate(event_id, &rate));
+    // Sentinel must be untouched on rejection.
+    EXPECT_EQ(rate, (int16_t) 0x5A5A);
+
+}
+
+TEST(BroadcastTime, extract_rate_rejects_report_date)
+{
+
+    // Report Date Jun 15 = 0x260F (byte 6 = 0x2)
+    event_id_t event_id = BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK | 0x260F;
+
+    int16_t rate = 0x5A5A;
+
+    EXPECT_FALSE(ProtocolBroadcastTimeHandler_extract_rate(event_id, &rate));
+    EXPECT_EQ(rate, (int16_t) 0x5A5A);
+
+}
+
+TEST(BroadcastTime, extract_rate_rejects_report_year)
+{
+
+    // Report Year 2026 = 0x37EA (byte 6 = 0x3)
+    event_id_t event_id = BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK | 0x37EA;
+
+    int16_t rate = 0x5A5A;
+
+    EXPECT_FALSE(ProtocolBroadcastTimeHandler_extract_rate(event_id, &rate));
+    EXPECT_EQ(rate, (int16_t) 0x5A5A);
+
+}
+
+TEST(BroadcastTime, extract_rate_rejects_set_time)
+{
+
+    // Set Time 14:30 = 0x8E1E (byte 6 = 0x8)
+    event_id_t event_id = BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK | 0x8E1E;
+
+    int16_t rate = 0x5A5A;
+
+    EXPECT_FALSE(ProtocolBroadcastTimeHandler_extract_rate(event_id, &rate));
+    EXPECT_EQ(rate, (int16_t) 0x5A5A);
+
+}
+
+TEST(BroadcastTime, extract_rate_rejects_set_date)
+{
+
+    // Set Date Jun 15 = 0xA60F (byte 6 = 0xA)
+    event_id_t event_id = BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK | 0xA60F;
+
+    int16_t rate = 0x5A5A;
+
+    EXPECT_FALSE(ProtocolBroadcastTimeHandler_extract_rate(event_id, &rate));
+    EXPECT_EQ(rate, (int16_t) 0x5A5A);
+
+}
+
+TEST(BroadcastTime, extract_rate_rejects_set_year)
+{
+
+    // Set Year 2026 = 0xB7EA (byte 6 = 0xB)
+    event_id_t event_id = BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK | 0xB7EA;
+
+    int16_t rate = 0x5A5A;
+
+    EXPECT_FALSE(ProtocolBroadcastTimeHandler_extract_rate(event_id, &rate));
+    EXPECT_EQ(rate, (int16_t) 0x5A5A);
+
+}
+
+TEST(BroadcastTime, extract_rate_rejects_special_events)
+{
+
+    int16_t rate = 0x5A5A;
+
+    // Query (0xF000), Stop (0xF001), Start (0xF002), Date Rollover (0xF003)
+    EXPECT_FALSE(ProtocolBroadcastTimeHandler_extract_rate(
+        BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK | BROADCAST_TIME_QUERY, &rate));
+    EXPECT_EQ(rate, (int16_t) 0x5A5A);
+
+    EXPECT_FALSE(ProtocolBroadcastTimeHandler_extract_rate(
+        BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK | BROADCAST_TIME_STOP, &rate));
+    EXPECT_EQ(rate, (int16_t) 0x5A5A);
+
+    EXPECT_FALSE(ProtocolBroadcastTimeHandler_extract_rate(
+        BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK | BROADCAST_TIME_START, &rate));
+    EXPECT_EQ(rate, (int16_t) 0x5A5A);
+
+    EXPECT_FALSE(ProtocolBroadcastTimeHandler_extract_rate(
+        BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK | BROADCAST_TIME_DATE_ROLLOVER, &rate));
+    EXPECT_EQ(rate, (int16_t) 0x5A5A);
+
+}
+
+// Boundary: nibbles adjacent to the accepted 0x4 / 0xC ranges must be rejected.
+TEST(BroadcastTime, extract_rate_rejects_adjacent_nibbles)
+{
+
+    int16_t rate = 0x5A5A;
+
+    // 0x5xxx — one above Report Rate
+    EXPECT_FALSE(ProtocolBroadcastTimeHandler_extract_rate(
+        BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK | 0x5000, &rate));
+    EXPECT_EQ(rate, (int16_t) 0x5A5A);
+
+    // 0xDxxx — one above Set Rate
+    EXPECT_FALSE(ProtocolBroadcastTimeHandler_extract_rate(
+        BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK | 0xD000, &rate));
+    EXPECT_EQ(rate, (int16_t) 0x5A5A);
+
+}
+
 
 // ============================================================================
 // Section 8: Event ID Creation Tests

@@ -271,10 +271,13 @@ static void _test_on_app_time_changed(broadcast_clock_t *clock) {
 
 static const interface_openlcb_application_broadcast_time_t _test_app_broadcast_time_interface = {
 
-    .on_time_changed = _test_on_app_time_changed,
+    .on_time_changed  = _test_on_app_time_changed,
     .on_time_received = _test_on_time_received,
     .on_date_received = _test_on_date_received,
     .on_year_received = _test_on_year_received,
+    .on_rate_received = _test_on_rate_received,
+    .on_clock_started = _test_on_clock_started,
+    .on_clock_stopped = _test_on_clock_stopped,
     .on_date_rollover = _test_on_date_rollover,
 
 };
@@ -1949,6 +1952,275 @@ TEST(BroadcastTimeApp, stop_invalid_clock_id_does_not_crash)
 
     // No clock set up - should just return without crash
     OpenLcbApplicationBroadcastTime_stop(BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+
+}
+
+
+// ============================================================================
+// Section 11b: Edge-detected start/stop callback tests
+// ----------------------------------------------------------------------------
+// start()/stop() and send_start()/send_stop() must fire on_clock_started /
+// on_clock_stopped exactly once per false<->true transition.  Calling
+// start() on an already-running clock (or stop() on an already-stopped
+// clock) must be silent — listeners only see real edges, regardless of
+// whether the trigger was a local call or an inbound bus event.
+// ============================================================================
+
+TEST(BroadcastTimeApp, start_fires_on_clock_started_on_transition)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_consumer(
+        NULL, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    ASSERT_FALSE(clock_state->is_running);
+
+    OpenLcbApplicationBroadcastTime_start(BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+
+    EXPECT_TRUE(clock_state->is_running);
+    EXPECT_TRUE(callback_clock_started);
+    EXPECT_FALSE(callback_clock_stopped);
+
+}
+
+TEST(BroadcastTimeApp, start_idempotent_when_already_running)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_consumer(
+        NULL, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    clock_state->is_running = true;
+
+    OpenLcbApplicationBroadcastTime_start(BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+
+    EXPECT_TRUE(clock_state->is_running);
+    EXPECT_FALSE(callback_clock_started);
+
+}
+
+TEST(BroadcastTimeApp, stop_fires_on_clock_stopped_on_transition)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_consumer(
+        NULL, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    clock_state->is_running = true;
+
+    OpenLcbApplicationBroadcastTime_stop(BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+
+    EXPECT_FALSE(clock_state->is_running);
+    EXPECT_TRUE(callback_clock_stopped);
+    EXPECT_FALSE(callback_clock_started);
+
+}
+
+TEST(BroadcastTimeApp, stop_idempotent_when_already_stopped)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_consumer(
+        NULL, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    ASSERT_FALSE(clock_state->is_running);
+
+    OpenLcbApplicationBroadcastTime_stop(BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+
+    EXPECT_FALSE(clock_state->is_running);
+    EXPECT_FALSE(callback_clock_stopped);
+
+}
+
+TEST(BroadcastTimeApp, send_start_fires_callback_and_resets_accumulator_on_transition)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_producer(
+        node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    ASSERT_FALSE(clock_state->is_running);
+    clock_state->ms_accumulator = 12345;
+
+    EXPECT_TRUE(OpenLcbApplicationBroadcastTime_send_start(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK));
+
+    EXPECT_TRUE(clock_state->is_running);
+    EXPECT_EQ(clock_state->ms_accumulator, 0u);
+    EXPECT_TRUE(callback_clock_started);
+    // Event still emitted regardless of edge.
+    EXPECT_EQ(last_sent_mti, MTI_PC_EVENT_REPORT);
+
+}
+
+TEST(BroadcastTimeApp, send_start_idempotent_when_already_running_still_sends_event)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_producer(
+        node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    clock_state->is_running     = true;
+    clock_state->ms_accumulator = 12345;
+
+    EXPECT_TRUE(OpenLcbApplicationBroadcastTime_send_start(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK));
+
+    EXPECT_TRUE(clock_state->is_running);
+    // Accumulator must NOT be cleared when no edge — that would re-zero a
+    // running clock's intra-minute progress.
+    EXPECT_EQ(clock_state->ms_accumulator, 12345u);
+    EXPECT_FALSE(callback_clock_started);
+    // The Start event itself is still broadcast.
+    EXPECT_EQ(last_sent_mti, MTI_PC_EVENT_REPORT);
+
+}
+
+TEST(BroadcastTimeApp, send_stop_fires_callback_on_transition)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_producer(
+        node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    clock_state->is_running = true;
+
+    EXPECT_TRUE(OpenLcbApplicationBroadcastTime_send_stop(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK));
+
+    EXPECT_FALSE(clock_state->is_running);
+    EXPECT_TRUE(callback_clock_stopped);
+    EXPECT_EQ(last_sent_mti, MTI_PC_EVENT_REPORT);
+
+}
+
+TEST(BroadcastTimeApp, send_stop_idempotent_when_already_stopped_still_sends_event)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_producer(
+        node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    ASSERT_FALSE(clock_state->is_running);
+
+    EXPECT_TRUE(OpenLcbApplicationBroadcastTime_send_stop(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK));
+
+    EXPECT_FALSE(clock_state->is_running);
+    EXPECT_FALSE(callback_clock_stopped);
+    EXPECT_EQ(last_sent_mti, MTI_PC_EVENT_REPORT);
+
+}
+
+
+// ============================================================================
+// Section 11c: send_report_* must update local state and notify listeners
+// ----------------------------------------------------------------------------
+// Each send_report_*() must mirror what the receive path does so a producer
+// node's own listeners stay in sync — set fields, mark valid, fire callback.
+// ============================================================================
+
+TEST(BroadcastTimeApp, send_report_time_updates_state_and_fires_callback)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_producer(
+        node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    ASSERT_FALSE(clock_state->time.valid);
+
+    EXPECT_TRUE(OpenLcbApplicationBroadcastTime_send_report_time(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, 14, 30));
+
+    EXPECT_EQ(clock_state->time.hour, 14);
+    EXPECT_EQ(clock_state->time.minute, 30);
+    EXPECT_TRUE(clock_state->time.valid);
+    EXPECT_TRUE(callback_time_received);
+
+}
+
+TEST(BroadcastTimeApp, send_report_date_updates_state_and_fires_callback)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_producer(
+        node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    ASSERT_FALSE(clock_state->date.valid);
+
+    EXPECT_TRUE(OpenLcbApplicationBroadcastTime_send_report_date(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, 6, 15));
+
+    EXPECT_EQ(clock_state->date.month, 6);
+    EXPECT_EQ(clock_state->date.day, 15);
+    EXPECT_TRUE(clock_state->date.valid);
+    EXPECT_TRUE(callback_date_received);
+
+}
+
+TEST(BroadcastTimeApp, send_report_year_updates_state_and_fires_callback)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_producer(
+        node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    ASSERT_FALSE(clock_state->year.valid);
+
+    EXPECT_TRUE(OpenLcbApplicationBroadcastTime_send_report_year(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, 2026));
+
+    EXPECT_EQ(clock_state->year.year, 2026);
+    EXPECT_TRUE(clock_state->year.valid);
+    EXPECT_TRUE(callback_year_received);
+
+}
+
+TEST(BroadcastTimeApp, send_report_rate_updates_state_resets_accumulator_and_fires_callback)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_producer(
+        node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    ASSERT_FALSE(clock_state->rate.valid);
+    clock_state->ms_accumulator = 99999;
+
+    EXPECT_TRUE(OpenLcbApplicationBroadcastTime_send_report_rate(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, 0x0010));
+
+    EXPECT_EQ(clock_state->rate.rate, 0x0010);
+    EXPECT_TRUE(clock_state->rate.valid);
+    EXPECT_EQ(clock_state->ms_accumulator, 0u);
+    EXPECT_TRUE(callback_rate_received);
 
 }
 
