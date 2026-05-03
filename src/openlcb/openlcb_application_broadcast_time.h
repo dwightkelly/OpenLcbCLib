@@ -80,20 +80,6 @@
         /** @brief Called when a Report Year event is received from the network. */
         void (*on_year_received)(openlcb_node_t *openlcb_node, broadcast_clock_state_t *clock_state);
 
-        /** @brief Called when a Report Rate event is received from the network,
-         *         or when this node's send_report_rate() updates local state. */
-        void (*on_rate_received)(openlcb_node_t *openlcb_node, broadcast_clock_state_t *clock_state);
-
-        /** @brief Called when this clock transitions to running, whether
-         *         triggered by an inbound Start event, a local start() call,
-         *         or a local send_start() call. */
-        void (*on_clock_started)(openlcb_node_t *openlcb_node, broadcast_clock_state_t *clock_state);
-
-        /** @brief Called when this clock transitions to stopped, whether
-         *         triggered by an inbound Stop event, a local stop() call,
-         *         or a local send_stop() call. */
-        void (*on_clock_stopped)(openlcb_node_t *openlcb_node, broadcast_clock_state_t *clock_state);
-
         /** @brief Called when the clock rolls over from 23:59 to 00:00. */
         void (*on_date_rollover)(openlcb_node_t *openlcb_node, broadcast_clock_state_t *clock_state);
 

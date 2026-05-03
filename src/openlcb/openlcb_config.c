@@ -240,13 +240,10 @@ static void _build_app_broadcast_time(void) {
 
     memset(&_app_broadcast_time, 0, sizeof(_app_broadcast_time));
 
-    _app_broadcast_time.on_time_changed  = _config->on_broadcast_time_changed;
+    _app_broadcast_time.on_time_changed = _config->on_broadcast_time_changed;
     _app_broadcast_time.on_time_received = _config->on_broadcast_time_received;
     _app_broadcast_time.on_date_received = _config->on_broadcast_date_received;
     _app_broadcast_time.on_year_received = _config->on_broadcast_year_received;
-    _app_broadcast_time.on_rate_received = _config->on_broadcast_rate_received;
-    _app_broadcast_time.on_clock_started = _config->on_broadcast_clock_started;
-    _app_broadcast_time.on_clock_stopped = _config->on_broadcast_clock_stopped;
     _app_broadcast_time.on_date_rollover = _config->on_broadcast_date_rollover;
 
 }
