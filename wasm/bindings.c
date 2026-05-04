@@ -1515,6 +1515,47 @@ _BT_SEND_NODE_CLOCK_U16 (wasm_bt_send_set_rate,     OpenLcbApplicationBroadcastT
 _BT_SEND_NODE_CLOCK     (wasm_bt_send_command_start, OpenLcbApplicationBroadcastTime_send_command_start)
 _BT_SEND_NODE_CLOCK     (wasm_bt_send_command_stop,  OpenLcbApplicationBroadcastTime_send_command_stop)
 
+// Local-origin state setters: mutate clock state and fire the matching
+// on_*_received callback without putting any frame on the wire.  Wire
+// emission stays the caller's choice via the send_* family above.
+
+#define _BT_VOID_NODE_CLOCK(fn_name, c_fn)                                        \
+EMSCRIPTEN_KEEPALIVE                                                              \
+int32_t fn_name(uint64_t node_id, uint64_t clock_id)                              \
+{                                                                                 \
+    openlcb_node_t *n = OpenLcbNode_find_by_node_id(node_id);                     \
+    if (n == NULL) { return WASM_ERR_UNKNOWN_NODE; }                              \
+    c_fn(n, clock_id);                                                            \
+    return WASM_OK;                                                               \
+}
+
+#define _BT_VOID_NODE_CLOCK_2U8(fn_name, c_fn)                                    \
+EMSCRIPTEN_KEEPALIVE                                                              \
+int32_t fn_name(uint64_t node_id, uint64_t clock_id, uint32_t a, uint32_t b)      \
+{                                                                                 \
+    openlcb_node_t *n = OpenLcbNode_find_by_node_id(node_id);                     \
+    if (n == NULL) { return WASM_ERR_UNKNOWN_NODE; }                              \
+    c_fn(n, clock_id, (uint8_t) a, (uint8_t) b);                                  \
+    return WASM_OK;                                                               \
+}
+
+#define _BT_VOID_NODE_CLOCK_U16(fn_name, c_fn, cast_t)                            \
+EMSCRIPTEN_KEEPALIVE                                                              \
+int32_t fn_name(uint64_t node_id, uint64_t clock_id, int32_t v)                   \
+{                                                                                 \
+    openlcb_node_t *n = OpenLcbNode_find_by_node_id(node_id);                     \
+    if (n == NULL) { return WASM_ERR_UNKNOWN_NODE; }                              \
+    c_fn(n, clock_id, (cast_t) v);                                                \
+    return WASM_OK;                                                               \
+}
+
+_BT_VOID_NODE_CLOCK_2U8 (wasm_bt_set_local_time,  OpenLcbApplicationBroadcastTime_set_local_time)
+_BT_VOID_NODE_CLOCK_2U8 (wasm_bt_set_local_date,  OpenLcbApplicationBroadcastTime_set_local_date)
+_BT_VOID_NODE_CLOCK_U16 (wasm_bt_set_local_year,  OpenLcbApplicationBroadcastTime_set_local_year, uint16_t)
+_BT_VOID_NODE_CLOCK_U16 (wasm_bt_set_local_rate,  OpenLcbApplicationBroadcastTime_set_local_rate, int16_t)
+_BT_VOID_NODE_CLOCK     (wasm_bt_set_local_start, OpenLcbApplicationBroadcastTime_set_local_start)
+_BT_VOID_NODE_CLOCK     (wasm_bt_set_local_stop,  OpenLcbApplicationBroadcastTime_set_local_stop)
+
 // ---------------------------------------------------------------------------
 // Broadcast Time — clock lifecycle, triggers, and event-ID codec helpers.
 // ---------------------------------------------------------------------------

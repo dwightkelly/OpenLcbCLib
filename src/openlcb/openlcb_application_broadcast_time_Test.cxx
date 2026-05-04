@@ -275,6 +275,9 @@ static const interface_openlcb_application_broadcast_time_t _test_app_broadcast_
     .on_time_received = _test_on_time_received,
     .on_date_received = _test_on_date_received,
     .on_year_received = _test_on_year_received,
+    .on_rate_received = _test_on_rate_received,
+    .on_clock_started = _test_on_clock_started,
+    .on_clock_stopped = _test_on_clock_stopped,
     .on_date_rollover = _test_on_date_rollover,
 
 };
@@ -895,6 +898,186 @@ TEST(BroadcastTimeApp, time_tick_forward_high_rate_multiple_minutes)
 
     EXPECT_EQ(clock_state->time.hour, 10);
     EXPECT_EQ(clock_state->time.minute, 10);
+
+}
+
+
+// ============================================================================
+// Section 4b: Producer auto-advance + §6.2 periodic Report Time
+// ----------------------------------------------------------------------------
+// _100ms_time_tick walks producer slots too, not just consumers.  When a
+// producer clock has is_running=true and a non-zero rate, the same
+// fixed-point accumulator drives _advance_minute_forward/backward on every
+// fast-minute boundary, AND the producer broadcasts a Report Time PCER
+// rate-limited to once per real minute (cooldown of 600 ticks = 60s).  A
+// midnight crossing additionally emits Date Rollover, Report Year, and
+// Report Date.
+//
+// These tests pin the auto-advance contract — the symptom of "set rate 60×,
+// nothing happens" was a JSLib-side bug (send_report_rate doesn't update
+// local state; set_local_rate must be called too) but the underlying
+// library behavior here needed regression coverage.
+// ============================================================================
+
+TEST(BroadcastTimeApp, producer_60x_advances_one_minute_and_emits_report_time)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_producer(
+        node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    clock_state->is_running = true;
+    clock_state->rate.rate  = 240;  // 60.00x real-time
+    clock_state->time.hour  = 10;
+    clock_state->time.minute = 30;
+
+    // At rate=240 (60x): each tick adds 100*240 = 24000 to the accumulator;
+    // 240000 / 24000 = 10 ticks per fast-minute boundary.
+    for (int tick = 0; tick < 10; tick++) {
+
+        OpenLcbApplicationBroadcastTime_100ms_time_tick((uint8_t)(tick + 1));
+
+    }
+
+    EXPECT_EQ(clock_state->time.hour, 10);
+    EXPECT_EQ(clock_state->time.minute, 31);
+
+    // First minute boundary always emits — cooldown was 0 going in.
+    EXPECT_EQ(send_count, 1);
+    EXPECT_EQ(last_sent_mti, MTI_PC_EVENT_REPORT);
+    EXPECT_EQ(last_sent_event_id,
+              ProtocolBroadcastTimeHandler_create_time_event_id(BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, 10, 31, false));
+
+}
+
+TEST(BroadcastTimeApp, producer_60x_report_time_rate_limited_to_once_per_real_minute)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_producer(
+        node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    clock_state->is_running = true;
+    clock_state->rate.rate  = 240;  // 60x
+    clock_state->time.hour  = 10;
+    clock_state->time.minute = 0;
+
+    // 599 ticks = 59.9 real seconds = 59 fast-minutes crossed (uint8_t tick wraps fine).
+    // Cooldown after first PCER is 600 ticks; only the first fast-minute should emit.
+    for (int tick = 0; tick < 599; tick++) {
+
+        OpenLcbApplicationBroadcastTime_100ms_time_tick((uint8_t)(tick + 1));
+
+    }
+
+    // 599 ticks / 10 ticks per fast-min = 59 fast-minutes elapsed
+    EXPECT_EQ(clock_state->time.hour, 10);
+    EXPECT_EQ(clock_state->time.minute, 59);
+
+    // Despite 59 minute boundaries, the cooldown limited PCER to exactly 1.
+    EXPECT_EQ(send_count, 1);
+
+}
+
+TEST(BroadcastTimeApp, producer_zero_rate_does_not_advance_or_emit)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_producer(
+        node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    clock_state->is_running = true;
+    clock_state->rate.rate  = 0;     // explicitly zero — the symptom of the JSLib bug
+    clock_state->time.hour  = 10;
+    clock_state->time.minute = 30;
+
+    for (int tick = 0; tick < 100; tick++) {
+
+        OpenLcbApplicationBroadcastTime_100ms_time_tick((uint8_t)(tick + 1));
+
+    }
+
+    EXPECT_EQ(clock_state->time.minute, 30);
+    EXPECT_EQ(send_count, 0);
+
+}
+
+TEST(BroadcastTimeApp, producer_stopped_does_not_advance_or_emit)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_producer(
+        node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    clock_state->is_running = false;  // stopped
+    clock_state->rate.rate  = 240;
+    clock_state->time.hour  = 10;
+    clock_state->time.minute = 30;
+
+    for (int tick = 0; tick < 100; tick++) {
+
+        OpenLcbApplicationBroadcastTime_100ms_time_tick((uint8_t)(tick + 1));
+
+    }
+
+    EXPECT_EQ(clock_state->time.minute, 30);
+    EXPECT_EQ(send_count, 0);
+
+}
+
+TEST(BroadcastTimeApp, producer_midnight_crossing_emits_rollover_year_date)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_producer(
+        node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    clock_state->is_running  = true;
+    clock_state->rate.rate   = 240;  // 60x
+    clock_state->time.hour   = 23;
+    clock_state->time.minute = 59;
+    clock_state->date.day    = 15;
+    clock_state->date.month  = 6;
+    clock_state->year.year   = 2026;
+
+    // 10 ticks = 1 fast-minute = midnight crossing.
+    for (int tick = 0; tick < 10; tick++) {
+
+        OpenLcbApplicationBroadcastTime_100ms_time_tick((uint8_t)(tick + 1));
+
+    }
+
+    EXPECT_EQ(clock_state->time.hour, 0);
+    EXPECT_EQ(clock_state->time.minute, 0);
+    EXPECT_EQ(clock_state->date.day, 16);
+
+    // Minute boundary fires:
+    //   - Report Time (rate-limited, first one always fires)
+    //   - Date Rollover (midnight crossing)
+    //   - Report Year (midnight crossing)
+    //   - Report Date (midnight crossing)
+    // = 4 wire frames in this single tick.
+    EXPECT_EQ(send_count, 4);
 
 }
 
@@ -1681,6 +1864,193 @@ TEST(BroadcastTimeApp, receive_cmd_stop_does_not_emit_report_echo)
 
     ProtocolBroadcastTimeHandler_handle_time_event(&info, cmd_stop);
 
+    EXPECT_EQ(send_count, 0);
+
+}
+
+
+// ============================================================================
+// Section 6d: set_local_* — local-origin mutate-and-notify
+// ----------------------------------------------------------------------------
+// The set_local_* family is the third producer-side primitive: it mutates
+// the clock_state for a local-origin update (UI click, internal logic) and
+// fires the matching on_*_received callback on the application interface.
+// It must NOT put any frame on the wire — wire emission is the caller's
+// separate decision via send_report_* / send_start / send_stop.
+//
+// This pair of guarantees (state mutated AND callback fired AND zero
+// outbound frames) is the contract these tests pin down.  Without it the
+// rate-doesn't-tick bug returns: a producer that calls send_report_rate
+// but never set_local_rate broadcasts the new rate to listeners but its
+// own state.rate.rate stays unchanged, so its own internal time-advance
+// loop never accelerates.
+// ============================================================================
+
+TEST(BroadcastTimeApp, set_local_time_mutates_state_fires_callback_no_wire)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_producer(
+        node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    clock_state->ms_accumulator = 12345;
+
+    OpenLcbApplicationBroadcastTime_set_local_time(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, 14, 30);
+
+    EXPECT_EQ(clock_state->time.hour, 14);
+    EXPECT_EQ(clock_state->time.minute, 30);
+    EXPECT_TRUE(clock_state->time.valid);
+    // Receive-side parity: ms_accumulator must reset.
+    EXPECT_EQ(clock_state->ms_accumulator, 0u);
+    EXPECT_TRUE(callback_time_received);
+    EXPECT_EQ(send_count, 0);
+
+}
+
+TEST(BroadcastTimeApp, set_local_date_mutates_state_fires_callback_no_wire)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_producer(
+        node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+
+    OpenLcbApplicationBroadcastTime_set_local_date(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, 6, 15);
+
+    EXPECT_EQ(clock_state->date.month, 6);
+    EXPECT_EQ(clock_state->date.day, 15);
+    EXPECT_TRUE(clock_state->date.valid);
+    EXPECT_TRUE(callback_date_received);
+    EXPECT_EQ(send_count, 0);
+
+}
+
+TEST(BroadcastTimeApp, set_local_year_mutates_state_fires_callback_no_wire)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_producer(
+        node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+
+    OpenLcbApplicationBroadcastTime_set_local_year(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, 2026);
+
+    EXPECT_EQ(clock_state->year.year, 2026);
+    EXPECT_TRUE(clock_state->year.valid);
+    EXPECT_TRUE(callback_year_received);
+    EXPECT_EQ(send_count, 0);
+
+}
+
+TEST(BroadcastTimeApp, set_local_rate_mutates_state_resets_accumulator_fires_callback_no_wire)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_producer(
+        node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    clock_state->ms_accumulator = 99999;
+
+    // 60x = rate 240 (60 * 4)
+    OpenLcbApplicationBroadcastTime_set_local_rate(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, 240);
+
+    EXPECT_EQ(clock_state->rate.rate, 240);
+    EXPECT_TRUE(clock_state->rate.valid);
+    EXPECT_EQ(clock_state->ms_accumulator, 0u);
+    EXPECT_TRUE(callback_rate_received);
+    EXPECT_EQ(send_count, 0);
+
+}
+
+TEST(BroadcastTimeApp, set_local_start_mutates_state_resets_accumulator_fires_callback_no_wire)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_producer(
+        node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    ASSERT_FALSE(clock_state->is_running);
+    clock_state->ms_accumulator = 50000;
+
+    OpenLcbApplicationBroadcastTime_set_local_start(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+
+    EXPECT_TRUE(clock_state->is_running);
+    EXPECT_EQ(clock_state->ms_accumulator, 0u);
+    EXPECT_TRUE(callback_clock_started);
+    EXPECT_EQ(send_count, 0);
+
+}
+
+TEST(BroadcastTimeApp, set_local_stop_mutates_state_fires_callback_no_wire)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    broadcast_clock_state_t *clock_state = OpenLcbApplicationBroadcastTime_setup_producer(
+        node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+    clock_state->is_running = true;
+
+    OpenLcbApplicationBroadcastTime_set_local_stop(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+
+    EXPECT_FALSE(clock_state->is_running);
+    EXPECT_TRUE(callback_clock_stopped);
+    EXPECT_EQ(send_count, 0);
+
+}
+
+// Negative cases — unknown clock IDs must be silent no-ops, not crash.
+TEST(BroadcastTimeApp, set_local_time_unknown_clock_is_silent_no_op)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    OpenLcbApplicationBroadcastTime_set_local_time(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, 14, 30);
+
+    EXPECT_FALSE(callback_time_received);
+    EXPECT_EQ(send_count, 0);
+
+}
+
+TEST(BroadcastTimeApp, set_local_rate_unknown_clock_is_silent_no_op)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    OpenLcbApplicationBroadcastTime_set_local_rate(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, 240);
+
+    EXPECT_FALSE(callback_rate_received);
     EXPECT_EQ(send_count, 0);
 
 }
