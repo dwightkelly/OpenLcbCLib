@@ -271,6 +271,11 @@ static node_id_t _tde_callback_source_node_id = 0;
 static uint16_t _tde_callback_error_code = 0;
 static uint16_t _tde_callback_rejected_mti = 0;
 
+static bool _vnid_callback_called = false;
+static openlcb_node_t *_vnid_callback_node = nullptr;
+static node_id_t _vnid_callback_source_id = 0;
+static uint16_t _vnid_callback_source_alias = 0;
+
     /** @brief Mock OIR callback — captures parameters for verification. */
 void _mock_on_optional_interaction_rejected(openlcb_node_t *openlcb_node, node_id_t source_node_id, uint16_t error_code, uint16_t rejected_mti) {
 
@@ -293,14 +298,25 @@ void _mock_on_terminate_due_to_error(openlcb_node_t *openlcb_node, node_id_t sou
 
 }
 
+    /** @brief Mock Verified Node ID callback — captures parameters for verification. */
+void _mock_on_verified_node_id(openlcb_node_t *openlcb_node, source_info_t *source) {
+
+    _vnid_callback_called = true;
+    _vnid_callback_node = openlcb_node;
+    _vnid_callback_source_id = source->source_id;
+    _vnid_callback_source_alias = source->source_alias;
+
+}
+
 // NULL-callback interface (existing behavior — no callbacks wired)
 interface_openlcb_protocol_message_network_t interface_openlcb_protocol_message_network = {};
 
-// Callback-wired interface for OIR/TDE tests
+// Callback-wired interface for OIR/TDE/VNID tests
 interface_openlcb_protocol_message_network_t interface_openlcb_protocol_message_network_with_callbacks = {
 
     .on_optional_interaction_rejected = &_mock_on_optional_interaction_rejected,
     .on_terminate_due_to_error = &_mock_on_terminate_due_to_error,
+    .on_verified_node_id = &_mock_on_verified_node_id,
 
 };
 
@@ -327,6 +343,11 @@ void _reset_variables(void)
     _tde_callback_source_node_id = 0;
     _tde_callback_error_code = 0;
     _tde_callback_rejected_mti = 0;
+
+    _vnid_callback_called = false;
+    _vnid_callback_node = nullptr;
+    _vnid_callback_source_id = 0;
+    _vnid_callback_source_alias = 0;
 
 }
 
@@ -902,12 +923,64 @@ TEST(ProtocolMessageNetwork, handle_verified_node_id_duplicate_subsequent)
     OpenLcbUtilities_load_openlcb_message(openlcb_msg, SOURCE_ALIAS, SOURCE_ID, DEST_ALIAS, DEST_ID, MTI_VERIFIED_NODE_ID);
     openlcb_msg->payload_count = 6;
     OpenLcbUtilities_copy_node_id_to_openlcb_payload(openlcb_msg, DEST_ID, 0);
-    
+
     ProtocolMessageNetwork_handle_verified_node_id(&statemachine_info);
-    
+
     // Should not generate another message
     EXPECT_FALSE(statemachine_info.outgoing_msg_info.valid);
     EXPECT_EQ(outgoing_msg->mti, 0x00);
+}
+
+// ============================================================================
+// TEST: Verified Node ID — Non-Duplicate Fires on_verified_node_id Callback
+// @details Wires the with_callbacks interface and verifies the callback fires
+//          with the source node's id and alias when a non-self Verified Node
+//          ID Reply arrives (MessageNetworkS Section 3.4).
+// @coverage on_verified_node_id callback dispatch (lines 257-264)
+// ============================================================================
+
+TEST(ProtocolMessageNetwork, handle_verified_node_id_non_duplicate_fires_callback)
+{
+
+    _reset_variables();
+    OpenLcbNode_initialize(&interface_openlcb_node);
+    OpenLcbBufferFifo_initialize();
+    OpenLcbBufferStore_initialize();
+    ProtocolMessageNetwork_initialize(&interface_openlcb_protocol_message_network_with_callbacks);
+
+    openlcb_node_t *node1 = OpenLcbNode_allocate(DEST_ID, &_node_parameters_main_node);
+    node1->alias = DEST_ALIAS;
+    node1->state.duplicate_id_detected = false;
+
+    openlcb_msg_t *openlcb_msg = OpenLcbBufferStore_allocate_buffer(BASIC);
+    openlcb_msg_t *outgoing_msg = OpenLcbBufferStore_allocate_buffer(BASIC);
+
+    ASSERT_NE(node1, nullptr);
+    ASSERT_NE(openlcb_msg, nullptr);
+    ASSERT_NE(outgoing_msg, nullptr);
+
+    openlcb_statemachine_info_t statemachine_info;
+    statemachine_info.openlcb_node = node1;
+    statemachine_info.incoming_msg_info.msg_ptr = openlcb_msg;
+    statemachine_info.incoming_msg_info.enumerate = false;
+    statemachine_info.outgoing_msg_info.msg_ptr = outgoing_msg;
+    statemachine_info.outgoing_msg_info.enumerate = false;
+    statemachine_info.outgoing_msg_info.valid = false;
+
+    // Verified Node ID reply with a different source — non-duplicate path.
+    OpenLcbUtilities_load_openlcb_message(openlcb_msg, SOURCE_ALIAS, SOURCE_ID, DEST_ALIAS, DEST_ID, MTI_VERIFIED_NODE_ID);
+    openlcb_msg->payload_count = 6;
+    OpenLcbUtilities_copy_node_id_to_openlcb_payload(openlcb_msg, SOURCE_ID, 0);
+
+    ProtocolMessageNetwork_handle_verified_node_id(&statemachine_info);
+
+    EXPECT_FALSE(statemachine_info.outgoing_msg_info.valid);
+    EXPECT_FALSE(node1->state.duplicate_id_detected);
+    EXPECT_TRUE(_vnid_callback_called);
+    EXPECT_EQ(_vnid_callback_node, node1);
+    EXPECT_EQ(_vnid_callback_source_id, SOURCE_ID);
+    EXPECT_EQ(_vnid_callback_source_alias, SOURCE_ALIAS);
+
 }
 
 // ============================================================================

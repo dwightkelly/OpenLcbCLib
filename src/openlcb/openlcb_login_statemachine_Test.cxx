@@ -2294,6 +2294,100 @@ TEST(OpenLcbLoginStateMachine, handle_outgoing_send_fails_keeps_valid_for_retry)
 }
 
 // ============================================================================
+// TEST: Sibling reenumerate body fires when handler sets enumerate mid-burst
+// @details With 2 nodes, the existing sibling_dispatch_handler_sets_enumerate
+//          test cannot trigger _sibling_handle_reenumerate's body because
+//          dispatch ends as soon as enumerate=true is set on the last
+//          sibling.  Three nodes give us a "next sibling" remaining after
+//          the enumerate-setting dispatch, so the next _run() iteration
+//          enters Priority 2b with enumerate already true.
+// @coverage _sibling_handle_reenumerate body (lines 291, 293) AND the
+//           "return after reenumerate" path in _run (line 544)
+// ============================================================================
+
+TEST(OpenLcbLoginStateMachine, sibling_dispatch_three_nodes_with_mid_burst_enumerate)
+{
+
+    _sibling_test_initialize();
+
+    openlcb_node_t *node_a = OpenLcbNode_allocate(0x050101010100, &_node_parameters_main_node);
+    node_a->alias = 0x100;
+    node_a->state.run_state = RUNSTATE_LOAD_INITIALIZATION_COMPLETE;
+
+    openlcb_node_t *node_b = OpenLcbNode_allocate(0x050101010101, &_node_parameters_main_node);
+    node_b->alias = 0x101;
+    node_b->state.run_state = RUNSTATE_RUN;
+
+    openlcb_node_t *node_c = OpenLcbNode_allocate(0x050101010102, &_node_parameters_main_node);
+    node_c->alias = 0x102;
+    node_c->state.run_state = RUNSTATE_RUN;
+
+    // Set enumerate on the very first dispatch.  Dispatch order: node_a (skipped,
+    // not RUN), node_b (mock call 0 — sets enumerate=true), then advance to
+    // node_c.  Next _run() iteration sees enumerate=true and fires the
+    // reenumerate body.
+    sibling_set_enumerate_on_call = 0;
+
+    for (int i = 0; i < 30; i++) {
+
+        OpenLcbLoginStatemachine_run();
+
+    }
+
+    // Mock fires for node_b's first dispatch (count==0), then again from the
+    // reenumerate body (count==1+).  Without the reenumerate path firing,
+    // count would be at most 1 for the burst that set enumerate.
+    EXPECT_GE(sibling_dispatch_call_count, 2);
+
+}
+
+// ============================================================================
+// TEST: Sibling dispatch with NULL openlcb_node clears active flag
+// @details Forces node_count > 1 (so dispatch_begin marks active=true) but
+//          openlcb_node_get_first returns NULL (so openlcb_node stays NULL).
+//          On the next _run() Priority 2 entry, _sibling_dispatch_current
+//          hits its NULL guard, clears active, and returns false.  Control
+//          falls through to the closing brace of the if(active) block.
+// @coverage _sibling_dispatch_current NULL-node early return (lines 315, 317)
+//           AND end-of-block fall-through in _run (line 566)
+// ============================================================================
+
+TEST(OpenLcbLoginStateMachine, sibling_dispatch_null_first_node_clears_active)
+{
+
+    _reset_variables();
+    _global_initialize();
+
+    // Make get_first return NULL despite count=2 — the only natural way to
+    // land in dispatch with a NULL openlcb_node.  This represents a corner
+    // case where a node was deallocated between count read and first read.
+    mock_node_count = 2;
+    fail_first_node = true;
+    fail_send_msg = false;
+
+    openlcb_login_statemachine_info_t *info = OpenLcbLoginStatemachine_get_statemachine_info();
+    info->outgoing_msg_info.valid = true;
+
+    // Drive the real handle_outgoing_openlcb_message — it sends, then
+    // _sibling_dispatch_begin sets active=true while leaving openlcb_node NULL.
+    OpenLcbLoginStatemachine_handle_outgoing_openlcb_message();
+
+    // Next _run(): Priority 1 skipped (active=true), Priority 2 enters,
+    //   2a: false (no sibling outgoing pending),
+    //   2b: false (enumerate=false from dispatch_begin),
+    //   2c: dispatch_current sees NULL openlcb_node → clears active, returns false.
+    //   Falls through to the end of the if(active) block (line 566).
+    OpenLcbLoginStatemachine_run();
+
+    // After the NULL-guard fired, active must be cleared so the next _run()
+    // tick re-enables Priority 1.  Verify by observing handle_outgoing fire.
+    called_function_ptr = nullptr;
+    OpenLcbLoginStatemachine_run();
+    EXPECT_EQ(called_function_ptr, &_handle_outgoing_openlcb_message);
+
+}
+
+// ============================================================================
 // TEST: Run loop skips outgoing when sibling dispatch active — exercises
 //       the !_sibling_dispatch_active guard in Priority 1
 // ============================================================================

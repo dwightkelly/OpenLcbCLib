@@ -1743,3 +1743,688 @@ TEST(ApplicationTrain, estop_forward_retries_on_failure)
     EXPECT_EQ(state->estop_forward_pending, (uint8_t) 0);
 
 }
+
+
+// ============================================================================
+// Section 14: Public Accessor Tests — heartbeat timeout, reserved, listeners
+// ============================================================================
+
+TEST(ApplicationTrain, set_heartbeat_timeout_null_node)
+{
+
+    _global_initialize();
+
+    OpenLcbApplicationTrain_set_heartbeat_timeout(NULL, 30);
+
+}
+
+TEST(ApplicationTrain, set_heartbeat_timeout_null_train_state)
+{
+
+    _global_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->train_state = NULL;
+
+    OpenLcbApplicationTrain_set_heartbeat_timeout(node, 30);
+
+}
+
+TEST(ApplicationTrain, set_heartbeat_timeout_normal_operation)
+{
+
+    _global_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->train_state = NULL;
+    train_state_t *state = OpenLcbApplicationTrain_setup(node);
+
+    EXPECT_NE(state, nullptr);
+
+    OpenLcbApplicationTrain_set_heartbeat_timeout(node, 30);
+
+    EXPECT_EQ(state->heartbeat_timeout_s, (uint32_t) 30);
+    EXPECT_EQ(state->heartbeat_counter_100ms, (uint32_t) 300);
+
+    OpenLcbApplicationTrain_set_heartbeat_timeout(node, 0);
+
+    EXPECT_EQ(state->heartbeat_timeout_s, (uint32_t) 0);
+    EXPECT_EQ(state->heartbeat_counter_100ms, (uint32_t) 0);
+
+}
+
+TEST(ApplicationTrain, get_heartbeat_timeout_null_node)
+{
+
+    _global_initialize();
+
+    EXPECT_EQ(OpenLcbApplicationTrain_get_heartbeat_timeout(NULL), (uint32_t) 0);
+
+}
+
+TEST(ApplicationTrain, get_heartbeat_timeout_null_train_state)
+{
+
+    _global_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->train_state = NULL;
+
+    EXPECT_EQ(OpenLcbApplicationTrain_get_heartbeat_timeout(node), (uint32_t) 0);
+
+}
+
+TEST(ApplicationTrain, get_heartbeat_timeout_normal_operation)
+{
+
+    _global_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->train_state = NULL;
+    train_state_t *state = OpenLcbApplicationTrain_setup(node);
+
+    EXPECT_NE(state, nullptr);
+
+    OpenLcbApplicationTrain_set_heartbeat_timeout(node, 45);
+
+    EXPECT_EQ(OpenLcbApplicationTrain_get_heartbeat_timeout(node), (uint32_t) 45);
+
+}
+
+TEST(ApplicationTrain, get_reserved_by_node_id_null_node)
+{
+
+    _global_initialize();
+
+    EXPECT_EQ(OpenLcbApplicationTrain_get_reserved_by_node_id(NULL), (node_id_t) 0);
+
+}
+
+TEST(ApplicationTrain, get_reserved_by_node_id_null_train_state)
+{
+
+    _global_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->train_state = NULL;
+
+    EXPECT_EQ(OpenLcbApplicationTrain_get_reserved_by_node_id(node), (node_id_t) 0);
+
+}
+
+TEST(ApplicationTrain, get_reserved_by_node_id_no_reservation)
+{
+
+    _global_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->train_state = NULL;
+    train_state_t *state = OpenLcbApplicationTrain_setup(node);
+
+    EXPECT_NE(state, nullptr);
+    state->reserved_node_count = 0;
+    state->reserved_by_node_id = TEST_CONTROLLER_NODE_ID;
+
+    EXPECT_EQ(OpenLcbApplicationTrain_get_reserved_by_node_id(node), (node_id_t) 0);
+
+}
+
+TEST(ApplicationTrain, get_reserved_by_node_id_active_reservation)
+{
+
+    _global_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->train_state = NULL;
+    train_state_t *state = OpenLcbApplicationTrain_setup(node);
+
+    EXPECT_NE(state, nullptr);
+    state->reserved_node_count = 1;
+    state->reserved_by_node_id = TEST_CONTROLLER_NODE_ID;
+
+    EXPECT_EQ(OpenLcbApplicationTrain_get_reserved_by_node_id(node), (node_id_t) TEST_CONTROLLER_NODE_ID);
+
+}
+
+TEST(ApplicationTrain, get_listener_count_null_node)
+{
+
+    _global_initialize();
+
+    EXPECT_EQ(OpenLcbApplicationTrain_get_listener_count(NULL), (uint8_t) 0);
+
+}
+
+TEST(ApplicationTrain, get_listener_count_null_train_state)
+{
+
+    _global_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->train_state = NULL;
+
+    EXPECT_EQ(OpenLcbApplicationTrain_get_listener_count(node), (uint8_t) 0);
+
+}
+
+TEST(ApplicationTrain, get_listener_count_normal_operation)
+{
+
+    _global_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->train_state = NULL;
+    train_state_t *state = OpenLcbApplicationTrain_setup(node);
+
+    EXPECT_NE(state, nullptr);
+    state->listener_count = 3;
+
+    EXPECT_EQ(OpenLcbApplicationTrain_get_listener_count(node), (uint8_t) 3);
+
+}
+
+TEST(ApplicationTrain, get_listener_at_null_node)
+{
+
+    _global_initialize();
+
+    node_id_t out_id = 0;
+    uint8_t out_flags = 0;
+
+    EXPECT_FALSE(OpenLcbApplicationTrain_get_listener_at(NULL, 0, &out_id, &out_flags));
+
+}
+
+TEST(ApplicationTrain, get_listener_at_null_train_state)
+{
+
+    _global_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->train_state = NULL;
+
+    node_id_t out_id = 0;
+    uint8_t out_flags = 0;
+
+    EXPECT_FALSE(OpenLcbApplicationTrain_get_listener_at(node, 0, &out_id, &out_flags));
+
+}
+
+TEST(ApplicationTrain, get_listener_at_null_out_node_id)
+{
+
+    _global_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->train_state = NULL;
+    train_state_t *state = OpenLcbApplicationTrain_setup(node);
+
+    EXPECT_NE(state, nullptr);
+    state->listeners[0].node_id = TEST_LISTENER_NODE_ID;
+    state->listeners[0].flags = 0x12;
+    state->listener_count = 1;
+
+    uint8_t out_flags = 0;
+
+    EXPECT_FALSE(OpenLcbApplicationTrain_get_listener_at(node, 0, NULL, &out_flags));
+
+}
+
+TEST(ApplicationTrain, get_listener_at_null_out_flags)
+{
+
+    _global_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->train_state = NULL;
+    train_state_t *state = OpenLcbApplicationTrain_setup(node);
+
+    EXPECT_NE(state, nullptr);
+    state->listeners[0].node_id = TEST_LISTENER_NODE_ID;
+    state->listeners[0].flags = 0x12;
+    state->listener_count = 1;
+
+    node_id_t out_id = 0;
+
+    EXPECT_FALSE(OpenLcbApplicationTrain_get_listener_at(node, 0, &out_id, NULL));
+
+}
+
+TEST(ApplicationTrain, get_listener_at_index_out_of_range)
+{
+
+    _global_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->train_state = NULL;
+    train_state_t *state = OpenLcbApplicationTrain_setup(node);
+
+    EXPECT_NE(state, nullptr);
+    state->listener_count = 2;
+
+    node_id_t out_id = 0;
+    uint8_t out_flags = 0;
+
+    EXPECT_FALSE(OpenLcbApplicationTrain_get_listener_at(node, 2, &out_id, &out_flags));
+    EXPECT_FALSE(OpenLcbApplicationTrain_get_listener_at(node, 99, &out_id, &out_flags));
+
+}
+
+TEST(ApplicationTrain, get_listener_at_normal_operation)
+{
+
+    _global_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->train_state = NULL;
+    train_state_t *state = OpenLcbApplicationTrain_setup(node);
+
+    EXPECT_NE(state, nullptr);
+    state->listeners[0].node_id = TEST_LISTENER_NODE_ID;
+    state->listeners[0].flags = 0x12;
+    state->listeners[1].node_id = 0xDEADBEEFCAFEULL;
+    state->listeners[1].flags = TRAIN_LISTENER_FLAG_REVERSE;
+    state->listener_count = 2;
+
+    node_id_t out_id = 0;
+    uint8_t out_flags = 0;
+
+    EXPECT_TRUE(OpenLcbApplicationTrain_get_listener_at(node, 0, &out_id, &out_flags));
+    EXPECT_EQ(out_id, (node_id_t) TEST_LISTENER_NODE_ID);
+    EXPECT_EQ(out_flags, (uint8_t) 0x12);
+
+    EXPECT_TRUE(OpenLcbApplicationTrain_get_listener_at(node, 1, &out_id, &out_flags));
+    EXPECT_EQ(out_id, (node_id_t) 0xDEADBEEFCAFEULL);
+    EXPECT_EQ(out_flags, (uint8_t) TRAIN_LISTENER_FLAG_REVERSE);
+
+}
+
+
+// ============================================================================
+// Section 15: Static helper coverage — pending heartbeat / e-stop edge cases
+// ============================================================================
+
+    /** Drives line 334: heartbeat_send_pending=1 with set_speed becoming zero
+     *  causes the pending flag to be dropped without a retry. */
+TEST(ApplicationTrain, heartbeat_pending_dropped_when_speed_goes_zero)
+{
+
+    _reset_tracking();
+    _global_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+    node->train_state = NULL;
+    train_state_t *state = OpenLcbApplicationTrain_setup(node);
+
+    EXPECT_NE(state, nullptr);
+
+    state->heartbeat_timeout_s = 10;
+    state->heartbeat_counter_100ms = 50;
+    state->heartbeat_send_pending = 1;
+    state->set_speed = FLOAT16_POSITIVE_ZERO;
+    state->controller_node_id = TEST_CONTROLLER_NODE_ID;
+
+    OpenLcbApplicationTrain_100ms_timer_tick(1);
+
+    EXPECT_EQ(state->heartbeat_send_pending, (uint8_t) 0);
+    EXPECT_FALSE(mock_send_called);
+
+}
+
+    /** Drives line 191: heartbeat_send_pending retry but the interface has a
+     *  NULL send callback — _send_heartbeat_request returns at the early-out. */
+TEST(ApplicationTrain, heartbeat_pending_retry_with_null_send_callback)
+{
+
+    _reset_tracking();
+
+    ProtocolTrainHandler_initialize(&_handler_interface_with_heartbeat);
+    OpenLcbApplicationTrain_initialize(&_interface_nulls);
+    OpenLcbNode_initialize(&_interface_openlcb_node);
+    OpenLcbBufferFifo_initialize();
+    OpenLcbBufferStore_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+    node->train_state = NULL;
+    train_state_t *state = OpenLcbApplicationTrain_setup(node);
+
+    EXPECT_NE(state, nullptr);
+
+    state->heartbeat_timeout_s = 10;
+    state->heartbeat_counter_100ms = 50;
+    state->heartbeat_send_pending = 1;
+    state->set_speed = 0x3C00;  // forward, non-zero
+    state->controller_node_id = TEST_CONTROLLER_NODE_ID;
+
+    OpenLcbApplicationTrain_100ms_timer_tick(1);
+
+    EXPECT_FALSE(mock_send_called);
+    EXPECT_EQ(state->heartbeat_send_pending, (uint8_t) 1);
+
+}
+
+    /** Drives line 254: estop_forward_pending retry but state->owner_node is
+     *  NULL — _forward_estop_to_one_listener returns at the second early-out. */
+TEST(ApplicationTrain, estop_forward_with_null_owner_node)
+{
+
+    _reset_tracking();
+    _global_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+    node->train_state = NULL;
+    train_state_t *state = OpenLcbApplicationTrain_setup(node);
+
+    EXPECT_NE(state, nullptr);
+
+    state->heartbeat_timeout_s = 10;
+    state->heartbeat_counter_100ms = 50;
+    state->estop_forward_pending = 1;
+    state->listener_enum_index = 0;
+    state->listeners[0].node_id = TEST_LISTENER_NODE_ID;
+    state->listeners[0].flags = 0x00;
+    state->listener_count = 1;
+
+    state->owner_node = NULL;
+
+    OpenLcbApplicationTrain_100ms_timer_tick(1);
+
+    EXPECT_FALSE(mock_send_called);
+    EXPECT_EQ(state->listener_enum_index, (uint8_t) 0);
+
+    state->owner_node = node;
+
+}
+
+    /** Drives the speed_is_zero gate at line 403 when the heartbeat counter
+     *  expires for a stationary train — no estop and no callback. */
+TEST(ApplicationTrain, heartbeat_expiry_with_zero_speed_skips_estop)
+{
+
+    _reset_tracking();
+    _global_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+    node->train_state = NULL;
+    train_state_t *state = OpenLcbApplicationTrain_setup(node);
+
+    EXPECT_NE(state, nullptr);
+
+    state->heartbeat_timeout_s = 1;
+    state->heartbeat_counter_100ms = 1;
+    state->set_speed = FLOAT16_POSITIVE_ZERO;
+    state->controller_node_id = TEST_CONTROLLER_NODE_ID;
+
+    OpenLcbApplicationTrain_100ms_timer_tick(1);
+
+    EXPECT_EQ(state->heartbeat_counter_100ms, (uint32_t) 0);
+    EXPECT_FALSE(state->estop_active);
+    EXPECT_FALSE(mock_heartbeat_timeout_called);
+
+}
+
+
+// ============================================================================
+// Section 16: send_search_match coverage
+// ============================================================================
+
+TEST(ApplicationTrain, send_search_match_normal)
+{
+
+    _reset_tracking();
+    _global_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    EXPECT_TRUE(OpenLcbApplicationTrain_send_search_match(node, 0x060100000000ABCDULL));
+
+    EXPECT_TRUE(mock_send_called);
+    EXPECT_EQ(last_sent_msg.mti, MTI_PRODUCER_IDENTIFIED_SET);
+    EXPECT_EQ(last_sent_msg.payload_count, 8);
+    EXPECT_EQ(last_sent_payload[0], (uint8_t) 0x06);
+    EXPECT_EQ(last_sent_payload[1], (uint8_t) 0x01);
+    EXPECT_EQ(last_sent_payload[6], (uint8_t) 0xAB);
+    EXPECT_EQ(last_sent_payload[7], (uint8_t) 0xCD);
+
+}
+
+TEST(ApplicationTrain, send_search_match_null_node)
+{
+
+    _reset_tracking();
+    _global_initialize();
+
+    EXPECT_FALSE(OpenLcbApplicationTrain_send_search_match(NULL, 0x060100000000ABCDULL));
+    EXPECT_FALSE(mock_send_called);
+
+}
+
+TEST(ApplicationTrain, send_search_match_null_send_callback)
+{
+
+    _reset_tracking();
+
+    ProtocolTrainHandler_initialize(&_handler_interface_with_heartbeat);
+    OpenLcbApplicationTrain_initialize(&_interface_nulls);
+    OpenLcbNode_initialize(&_interface_openlcb_node);
+    OpenLcbBufferFifo_initialize();
+    OpenLcbBufferStore_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    EXPECT_FALSE(OpenLcbApplicationTrain_send_search_match(node, 0x060100000000ABCDULL));
+    EXPECT_FALSE(mock_send_called);
+
+}
+
+TEST(ApplicationTrain, send_search_match_send_failure)
+{
+
+    _reset_tracking();
+    _global_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    fail_send = true;
+    EXPECT_FALSE(OpenLcbApplicationTrain_send_search_match(node, 0x060100000000ABCDULL));
+    fail_send = false;
+
+}
+
+
+// ============================================================================
+// Section 17: Branch coverage — interface == NULL paths
+// ============================================================================
+
+    /** Initializes the train module with a NULL interface to drive the
+     *  `!_interface` branch in every send/timer-tick early-out. */
+static void _global_initialize_null_interface(void) {
+
+    ProtocolTrainHandler_initialize(&_handler_interface_with_heartbeat);
+    OpenLcbApplicationTrain_initialize(NULL);
+    OpenLcbNode_initialize(&_interface_openlcb_node);
+    OpenLcbBufferFifo_initialize();
+    OpenLcbBufferStore_initialize();
+
+}
+
+TEST(ApplicationTrain, send_helpers_with_null_interface_pointer)
+{
+
+    _reset_tracking();
+    _global_initialize_null_interface();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    EXPECT_FALSE(OpenLcbApplicationTrain_send_set_speed(node, TEST_TRAIN_ALIAS, TEST_TRAIN_NODE_ID, 0x3C00));
+    EXPECT_FALSE(OpenLcbApplicationTrain_send_set_function(node, TEST_TRAIN_ALIAS, TEST_TRAIN_NODE_ID, 0, 0));
+    EXPECT_FALSE(OpenLcbApplicationTrain_send_emergency_stop(node, TEST_TRAIN_ALIAS, TEST_TRAIN_NODE_ID));
+    EXPECT_FALSE(OpenLcbApplicationTrain_send_search_match(node, 0x060100000000ABCDULL));
+
+    EXPECT_FALSE(mock_send_called);
+
+}
+
+    /** Drives the `!_interface` branch inside the static helpers
+     *  `_send_heartbeat_request` and `_forward_estop_to_one_listener`
+     *  through the timer-tick retry path. */
+TEST(ApplicationTrain, timer_tick_static_helpers_with_null_interface)
+{
+
+    _reset_tracking();
+    _global_initialize_null_interface();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+    node->train_state = NULL;
+    train_state_t *state = OpenLcbApplicationTrain_setup(node);
+
+    EXPECT_NE(state, nullptr);
+
+    state->heartbeat_timeout_s = 10;
+    state->heartbeat_counter_100ms = 50;
+    state->heartbeat_send_pending = 1;
+    state->set_speed = 0x3C00;
+    state->controller_node_id = TEST_CONTROLLER_NODE_ID;
+
+    state->estop_forward_pending = 1;
+    state->listener_enum_index = 0;
+    state->listeners[0].node_id = TEST_LISTENER_NODE_ID;
+    state->listeners[0].flags = 0x00;
+    state->listener_count = 1;
+
+    OpenLcbApplicationTrain_100ms_timer_tick(1);
+
+    EXPECT_FALSE(mock_send_called);
+    EXPECT_EQ(state->heartbeat_send_pending, (uint8_t) 1);
+    EXPECT_EQ(state->listener_enum_index, (uint8_t) 0);
+
+}
+
+    /** Drives the `_interface == NULL` branch in the on_heartbeat_timeout
+     *  guard at line 420 — counter expires with the module reinitialized
+     *  to a NULL interface. */
+TEST(ApplicationTrain, heartbeat_timeout_with_null_interface_pointer)
+{
+
+    _reset_tracking();
+    _global_initialize_null_interface();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+    node->train_state = NULL;
+    train_state_t *state = OpenLcbApplicationTrain_setup(node);
+
+    EXPECT_NE(state, nullptr);
+
+    state->heartbeat_timeout_s = 1;
+    state->heartbeat_counter_100ms = 1;
+    state->set_speed = 0x3C00;
+    state->controller_node_id = TEST_CONTROLLER_NODE_ID;
+    state->listener_count = 0;
+
+    OpenLcbApplicationTrain_100ms_timer_tick(1);
+
+    EXPECT_TRUE(state->estop_active);
+    EXPECT_FALSE(mock_heartbeat_timeout_called);
+
+}
+
+    /** Counter is already at 0 entering the tick — exercises the
+     *  `old_counter > 0` false branch at line 403. */
+TEST(ApplicationTrain, timer_tick_counter_already_zero_no_estop)
+{
+
+    _reset_tracking();
+    _global_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+    node->train_state = NULL;
+    train_state_t *state = OpenLcbApplicationTrain_setup(node);
+
+    EXPECT_NE(state, nullptr);
+
+    state->heartbeat_timeout_s = 5;
+    state->heartbeat_counter_100ms = 0;
+    state->set_speed = 0x3C00;
+    state->controller_node_id = TEST_CONTROLLER_NODE_ID;
+
+    OpenLcbApplicationTrain_100ms_timer_tick(1);
+
+    EXPECT_FALSE(state->estop_active);
+    EXPECT_FALSE(mock_heartbeat_timeout_called);
+
+}
+
+    /** Drives the `state->owner_node == NULL` and `listener_enum_index >=
+     *  listener_count` branches inside _forward_estop_to_one_listener via
+     *  the timer-tick retry path. */
+TEST(ApplicationTrain, estop_forward_listener_index_at_count)
+{
+
+    _reset_tracking();
+    _global_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+    node->train_state = NULL;
+    train_state_t *state = OpenLcbApplicationTrain_setup(node);
+
+    EXPECT_NE(state, nullptr);
+
+    state->heartbeat_timeout_s = 10;
+    state->heartbeat_counter_100ms = 50;
+    state->estop_forward_pending = 1;
+    state->listener_enum_index = 1;
+    state->listeners[0].node_id = TEST_LISTENER_NODE_ID;
+    state->listeners[0].flags = 0x00;
+    state->listener_count = 1;
+
+    OpenLcbApplicationTrain_100ms_timer_tick(1);
+
+    EXPECT_FALSE(mock_send_called);
+    EXPECT_EQ(state->estop_forward_pending, (uint8_t) 0);
+
+}
+
+    /** Drives the `!node` branch in the static helper
+     *  `_send_heartbeat_request` via the timer-tick retry path with
+     *  `state->owner_node == NULL`. */
+TEST(ApplicationTrain, heartbeat_pending_retry_with_null_owner_node)
+{
+
+    _reset_tracking();
+    _global_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+    node->train_state = NULL;
+    train_state_t *state = OpenLcbApplicationTrain_setup(node);
+
+    EXPECT_NE(state, nullptr);
+
+    state->heartbeat_timeout_s = 10;
+    state->heartbeat_counter_100ms = 50;
+    state->heartbeat_send_pending = 1;
+    state->set_speed = 0x3C00;
+    state->controller_node_id = TEST_CONTROLLER_NODE_ID;
+
+    state->owner_node = NULL;
+
+    OpenLcbApplicationTrain_100ms_timer_tick(1);
+
+    EXPECT_FALSE(mock_send_called);
+    EXPECT_EQ(state->heartbeat_send_pending, (uint8_t) 1);
+
+    state->owner_node = node;
+
+}

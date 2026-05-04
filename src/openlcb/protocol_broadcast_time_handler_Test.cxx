@@ -479,6 +479,21 @@ TEST(BroadcastTime, extract_year_null_pointer)
 
 }
 
+TEST(BroadcastTime, extract_year_command_data_below_year_base_returns_false)
+{
+
+    // command_data = 0x0E1E (Report Time 14:30) — well below 0x3000 year base.
+    // y = 0x0E1E - 0x3000 = uint16_t underflow = 0xDE1E (56862), > 4095.
+    // extract_year must return false and leave *year untouched.
+    event_id_t event_id = BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK | 0x0E1E;
+
+    uint16_t year = 0x5A5A;
+
+    EXPECT_FALSE(ProtocolBroadcastTimeHandler_extract_year(event_id, &year));
+    EXPECT_EQ(year, (uint16_t) 0x5A5A);
+
+}
+
 
 // ============================================================================
 // Section 7: Rate Extraction Tests

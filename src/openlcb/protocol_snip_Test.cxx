@@ -1708,6 +1708,126 @@ TEST(ProtocolSnip, extract_handles_empty_string)
 }
 
 // ============================================================================
+// TEST: Extract Manufacturer Version ID — Empty Payload
+// @details Tests the early-return when payload_count is 0 (malformed reply).
+// @coverage extract_manufacturer_version_id payload_count < 1 branch
+// ============================================================================
+
+TEST(ProtocolSnip, extract_manufacturer_version_id_empty_payload_returns_zero)
+{
+    _reset_variables();
+    _global_initialize();
+
+    openlcb_msg_t *msg = OpenLcbBufferStore_allocate_buffer(SNIP);
+    ASSERT_NE(msg, nullptr);
+    msg->payload_count = 0;  // empty / malformed
+
+    uint8_t version = 0xAA;
+    uint16_t result = ProtocolSnip_extract_manufacturer_version_id(msg, &version);
+
+    EXPECT_EQ(result, 0);
+    // *out_version is undefined on failure — the C contract doesn't promise
+    // it stays untouched.  Just verify no crash and zero return.
+}
+
+// ============================================================================
+// TEST: Extract User Version ID — Insufficient Nulls
+// @details A truncated payload with fewer than 4 nulls should cause
+// _offset_after_n_nulls to return 0xFFFF, which extract_user_version_id
+// converts to a 0 return (cannot locate field).
+// @coverage extract_user_version_id "field could not be located" branch
+//           AND _offset_after_n_nulls "fewer than n nulls" branch
+// ============================================================================
+
+TEST(ProtocolSnip, extract_user_version_id_insufficient_nulls_returns_zero)
+{
+    _reset_variables();
+    _global_initialize();
+
+    openlcb_msg_t *msg = OpenLcbBufferStore_allocate_buffer(SNIP);
+    ASSERT_NE(msg, nullptr);
+
+    // Build a payload with only 2 nulls (mfg version byte + name + null + part of model
+    // with no terminating null).  _offset_after_n_nulls(msg, 4) will scan all
+    // payload_count bytes and find only 2 nulls, returning 0xFFFF.
+    uint8_t *payload_ptr = (uint8_t *)msg->payload;
+    payload_ptr[0] = 4;           // mfg version
+    payload_ptr[1] = 'M';
+    payload_ptr[2] = 'f';
+    payload_ptr[3] = 'g';
+    payload_ptr[4] = '\0';        // null #1 — end of mfg name
+    payload_ptr[5] = 'M';
+    payload_ptr[6] = '\0';        // null #2 — end of model
+    payload_ptr[7] = 'H';
+    payload_ptr[8] = 'W';         // no terminating null — payload truncated
+    msg->payload_count = 9;
+
+    uint8_t version = 0xAA;
+    uint16_t result = ProtocolSnip_extract_user_version_id(msg, &version);
+
+    EXPECT_EQ(result, 0);
+}
+
+// ============================================================================
+// TEST: Extract User Name — Insufficient Nulls
+// @details Same truncation as above; extract_user_name should detect
+// 0xFFFF from _offset_after_n_nulls and route into _copy_string_at_offset
+// with the sentinel offset, which writes a single null byte and returns 0.
+// @coverage extract_user_name 0xFFFF branch
+//           AND _copy_string_at_offset invalid-offset branch (writes '\0', returns 0)
+// ============================================================================
+
+TEST(ProtocolSnip, extract_user_name_insufficient_nulls_returns_empty_string)
+{
+    _reset_variables();
+    _global_initialize();
+
+    openlcb_msg_t *msg = OpenLcbBufferStore_allocate_buffer(SNIP);
+    ASSERT_NE(msg, nullptr);
+
+    uint8_t *payload_ptr = (uint8_t *)msg->payload;
+    payload_ptr[0] = 4;
+    payload_ptr[1] = 'M';
+    payload_ptr[2] = '\0';
+    payload_ptr[3] = 'M';
+    payload_ptr[4] = '\0';
+    msg->payload_count = 5;
+
+    char buffer[16] = {'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X'};
+    uint16_t result = ProtocolSnip_extract_user_name(msg, buffer, sizeof(buffer));
+
+    EXPECT_EQ(result, 0);
+    EXPECT_EQ(buffer[0], '\0');  // _copy_string_at_offset null-terminates on the invalid path
+}
+
+// ============================================================================
+// TEST: Extract User Name — Zero-Size Buffer
+// @details A max_bytes of 0 must trigger the early-return in
+// _copy_string_at_offset before any write.  The output buffer must remain
+// untouched.
+// @coverage _copy_string_at_offset max_bytes == 0 branch
+// ============================================================================
+
+TEST(ProtocolSnip, extract_user_name_zero_max_bytes_returns_zero)
+{
+    _reset_variables();
+    _global_initialize();
+
+    openlcb_msg_t *msg = OpenLcbBufferStore_allocate_buffer(SNIP);
+    ASSERT_NE(msg, nullptr);
+
+    _build_snip_reply_payload(msg, 4, "Mfg", "Model", "HW", "SW", 2, "User", "Desc");
+
+    char buffer[4] = {'X', 'X', 'X', 'X'};  // pre-filled
+    uint16_t result = ProtocolSnip_extract_user_name(msg, buffer, 0);
+
+    EXPECT_EQ(result, 0);
+    // Buffer must NOT be touched — early-return fires before any write.
+    EXPECT_EQ(buffer[0], 'X');
+    EXPECT_EQ(buffer[3], 'X');
+}
+
+// ============================================================================
 // TEST: Extract Roundtrip Through Loaders
 // @details Build a SNIP reply via the existing ProtocolSnip_load_* family,
 // then read every field back via ProtocolSnip_extract_* and confirm they

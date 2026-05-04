@@ -2055,6 +2055,70 @@ TEST(BroadcastTimeApp, set_local_rate_unknown_clock_is_silent_no_op)
 
 }
 
+TEST(BroadcastTimeApp, set_local_date_unknown_clock_is_silent_no_op)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    OpenLcbApplicationBroadcastTime_set_local_date(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, 6, 15);
+
+    EXPECT_FALSE(callback_date_received);
+    EXPECT_EQ(send_count, 0);
+
+}
+
+TEST(BroadcastTimeApp, set_local_year_unknown_clock_is_silent_no_op)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    OpenLcbApplicationBroadcastTime_set_local_year(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK, 2026);
+
+    EXPECT_FALSE(callback_year_received);
+    EXPECT_EQ(send_count, 0);
+
+}
+
+TEST(BroadcastTimeApp, set_local_start_unknown_clock_is_silent_no_op)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    OpenLcbApplicationBroadcastTime_set_local_start(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+
+    EXPECT_FALSE(callback_clock_started);
+    EXPECT_EQ(send_count, 0);
+
+}
+
+TEST(BroadcastTimeApp, set_local_stop_unknown_clock_is_silent_no_op)
+{
+
+    _reset_test_state();
+    _full_initialize();
+
+    openlcb_node_t *node = OpenLcbNode_allocate(TEST_DEST_ID, &_test_node_parameters);
+    node->alias = TEST_DEST_ALIAS;
+
+    OpenLcbApplicationBroadcastTime_set_local_stop(node, BROADCAST_TIME_ID_DEFAULT_FAST_CLOCK);
+
+    EXPECT_FALSE(callback_clock_stopped);
+    EXPECT_EQ(send_count, 0);
+
+}
+
 
 // ============================================================================
 // Section 7: Consumer Send Function Tests
