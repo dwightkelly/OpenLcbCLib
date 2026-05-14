@@ -52,6 +52,7 @@
 #include "openlcb_buffer_list.h"
 
 
+
     /** @brief Stored callback interface pointer; set by _initialize(). */
 static interface_openlcb_protocol_snip_t *_interface;
 
