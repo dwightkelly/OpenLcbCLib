@@ -399,7 +399,7 @@ extern "C" {
          * @brief Generates a masked Event ID covering a range of consecutive events.
          *
          * @param base_event_id Starting @ref event_id_t of the range
-         * @param count Number of events in the range (@ref event_range_count_enum)
+         * @param count Exponent N from @ref event_range_count_enum; range covers 2^N events
          *
          * @return Masked @ref event_id_t for a Range Identified message.
          */

@@ -314,6 +314,230 @@ void OpenLcbApplicationBroadcastTime_stop(event_id_t clock_id) {
 
 }
 
+    /**
+     * @brief Updates this clock's local time and fires the on_time_received callback.
+     *
+     * @details Algorithm:
+     * -# Find the clock slot for clock_id; if not found, return immediately.
+     * -# Write hour, minute, and mark time.valid = true.
+     * -# Reset state.ms_accumulator to 0 so the next minute boundary is measured
+     *    from the new time — matches receive-side _handle_report_time behavior.
+     * -# Fire on_time_received on the application interface.
+     *
+     * @verbatim
+     * @param openlcb_node  Pointer to the node owning the clock (passed to callback).
+     * @param clock_id      64-bit event_id_t identifying the clock.
+     * @param hour          Hour value to apply (0-23).
+     * @param minute        Minute value to apply (0-59).
+     * @endverbatim
+     */
+void OpenLcbApplicationBroadcastTime_set_local_time(openlcb_node_t *openlcb_node, event_id_t clock_id, uint8_t hour, uint8_t minute) {
+
+    broadcast_clock_t *clock = _find_clock_by_id(clock_id);
+
+    if (!clock) {
+
+        return;
+
+    }
+
+    clock->state.time.hour = hour;
+    clock->state.time.minute = minute;
+    clock->state.time.valid = true;
+    clock->state.ms_accumulator = 0;
+
+    if (_interface && _interface->on_time_received) {
+
+        _interface->on_time_received(openlcb_node, &clock->state);
+
+    }
+
+}
+
+    /**
+     * @brief Updates this clock's local date and fires the on_date_received callback.
+     *
+     * @details Algorithm:
+     * -# Find the clock slot for clock_id; if not found, return immediately.
+     * -# Write month, day, and mark date.valid = true.
+     * -# Fire on_date_received on the application interface.
+     *
+     * @verbatim
+     * @param openlcb_node  Pointer to the node owning the clock (passed to callback).
+     * @param clock_id      64-bit event_id_t identifying the clock.
+     * @param month         Month value to apply (1-12).
+     * @param day           Day value to apply (1-31).
+     * @endverbatim
+     */
+void OpenLcbApplicationBroadcastTime_set_local_date(openlcb_node_t *openlcb_node, event_id_t clock_id, uint8_t month, uint8_t day) {
+
+    broadcast_clock_t *clock = _find_clock_by_id(clock_id);
+
+    if (!clock) {
+
+        return;
+
+    }
+
+    clock->state.date.month = month;
+    clock->state.date.day = day;
+    clock->state.date.valid = true;
+
+    if (_interface && _interface->on_date_received) {
+
+        _interface->on_date_received(openlcb_node, &clock->state);
+
+    }
+
+}
+
+    /**
+     * @brief Updates this clock's local year and fires the on_year_received callback.
+     *
+     * @details Algorithm:
+     * -# Find the clock slot for clock_id; if not found, return immediately.
+     * -# Write year and mark year.valid = true.
+     * -# Fire on_year_received on the application interface.
+     *
+     * @verbatim
+     * @param openlcb_node  Pointer to the node owning the clock (passed to callback).
+     * @param clock_id      64-bit event_id_t identifying the clock.
+     * @param year          Year value to apply (0-4095).
+     * @endverbatim
+     */
+void OpenLcbApplicationBroadcastTime_set_local_year(openlcb_node_t *openlcb_node, event_id_t clock_id, uint16_t year) {
+
+    broadcast_clock_t *clock = _find_clock_by_id(clock_id);
+
+    if (!clock) {
+
+        return;
+
+    }
+
+    clock->state.year.year = year;
+    clock->state.year.valid = true;
+
+    if (_interface && _interface->on_year_received) {
+
+        _interface->on_year_received(openlcb_node, &clock->state);
+
+    }
+
+}
+
+    /**
+     * @brief Updates this clock's local rate and fires the on_rate_received callback.
+     *
+     * @details Algorithm:
+     * -# Find the clock slot for clock_id; if not found, return immediately.
+     * -# Write rate and mark rate.valid = true.
+     * -# Reset state.ms_accumulator to 0 so the next minute boundary uses the new
+     *    rate from a clean baseline — matches receive-side _handle_report_rate.
+     * -# Fire on_rate_received on the application interface.
+     *
+     * Without this update path, a producer that broadcasts a rate via
+     * send_report_rate would never advance its own modeled time at the new rate
+     * because loopback self-skip prevents the producer from receiving its own
+     * rate event back through the receive path.
+     *
+     * @verbatim
+     * @param openlcb_node  Pointer to the node owning the clock (passed to callback).
+     * @param clock_id      64-bit event_id_t identifying the clock.
+     * @param rate          12-bit signed fixed-point rate (4 = 1.0x real-time).
+     * @endverbatim
+     */
+void OpenLcbApplicationBroadcastTime_set_local_rate(openlcb_node_t *openlcb_node, event_id_t clock_id, int16_t rate) {
+
+    broadcast_clock_t *clock = _find_clock_by_id(clock_id);
+
+    if (!clock) {
+
+        return;
+
+    }
+
+    clock->state.rate.rate = rate;
+    clock->state.rate.valid = true;
+    clock->state.ms_accumulator = 0;
+
+    if (_interface && _interface->on_rate_received) {
+
+        _interface->on_rate_received(openlcb_node, &clock->state);
+
+    }
+
+}
+
+    /**
+     * @brief Marks this clock running and fires the on_clock_started callback.
+     *
+     * @details Algorithm:
+     * -# Find the clock slot for clock_id; if not found, return immediately.
+     * -# Set state.is_running = true.
+     * -# Reset state.ms_accumulator to 0 so the first post-start minute boundary
+     *    is measured from now — matches receive-side _handle_start.
+     * -# Fire on_clock_started on the application interface.
+     *
+     * @verbatim
+     * @param openlcb_node  Pointer to the node owning the clock (passed to callback).
+     * @param clock_id      64-bit event_id_t identifying the clock.
+     * @endverbatim
+     */
+void OpenLcbApplicationBroadcastTime_set_local_start(openlcb_node_t *openlcb_node, event_id_t clock_id) {
+
+    broadcast_clock_t *clock = _find_clock_by_id(clock_id);
+
+    if (!clock) {
+
+        return;
+
+    }
+
+    clock->state.is_running = true;
+    clock->state.ms_accumulator = 0;
+
+    if (_interface && _interface->on_clock_started) {
+
+        _interface->on_clock_started(openlcb_node, &clock->state);
+
+    }
+
+}
+
+    /**
+     * @brief Marks this clock stopped and fires the on_clock_stopped callback.
+     *
+     * @details Algorithm:
+     * -# Find the clock slot for clock_id; if not found, return immediately.
+     * -# Set state.is_running = false.
+     * -# Fire on_clock_stopped on the application interface.
+     *
+     * @verbatim
+     * @param openlcb_node  Pointer to the node owning the clock (passed to callback).
+     * @param clock_id      64-bit event_id_t identifying the clock.
+     * @endverbatim
+     */
+void OpenLcbApplicationBroadcastTime_set_local_stop(openlcb_node_t *openlcb_node, event_id_t clock_id) {
+
+    broadcast_clock_t *clock = _find_clock_by_id(clock_id);
+
+    if (!clock) {
+
+        return;
+
+    }
+
+    clock->state.is_running = false;
+
+    if (_interface && _interface->on_clock_stopped) {
+
+        _interface->on_clock_stopped(openlcb_node, &clock->state);
+
+    }
+
+}
+
 
     /**
      * @brief Returns the state for a registered clock.
@@ -632,13 +856,19 @@ static void _advance_minute_backward(broadcast_clock_state_t *clock, openlcb_nod
      * @details Algorithm:
      * -# Compute ticks elapsed since last call via subtraction.
      * -# Skip if no time has elapsed (deduplication).
-     * -# For each allocated, running consumer clock with a non-zero rate:
+     * -# For each allocated, running consumer or producer clock with a non-zero rate:
      *    - Compute abs_rate from the signed rate.
      *    - Add 100 * abs_rate * ticks_elapsed to state.ms_accumulator.
      *    - While accumulator >= BROADCAST_TIME_MS_PER_MINUTE_FIXED_POINT (240,000):
      *        - Subtract the threshold from the accumulator.
      *        - Call _advance_minute_forward() or _advance_minute_backward() depending on rate sign.
      *        - Fire the on_time_changed callback.
+     *        - Producer-only: when report_cooldown_ticks has expired, broadcast the
+     *          §6.2 periodic Report Time PCER and reset the cooldown to 600 ticks
+     *          (60 real seconds — one PCER per real minute regardless of fast rate).
+     *        - Producer-only: on midnight crossing (prev_hour == 23, new hour == 0),
+     *          broadcast the §4.10 Date Rollover, then Report Year, then Report Date.
+     * -# For each producer clock, decrement report_cooldown_ticks and sync_delay_ticks.
      * -# For each allocated producer clock with a producer_node:
      *    - Compare previous_run_state with the node's current run_state.
      *    - On transition to RUNSTATE_RUN, auto-set query_reply_pending to trigger

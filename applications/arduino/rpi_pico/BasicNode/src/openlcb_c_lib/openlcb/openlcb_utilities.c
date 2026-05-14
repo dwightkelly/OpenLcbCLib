@@ -674,7 +674,8 @@ void OpenLcbUtilities_load_config_mem_reply_read_fail_message_header(openlcb_sta
 
          range = &openlcb_node->consumers.range_list[i];
          event_id_t start_event = range->start_base;
-         event_id_t end_event = range->start_base + range->event_count;
+         event_id_t span = (range->event_count == 0) ? 1ULL : (1ULL << range->event_count);
+         event_id_t end_event = range->start_base + span - 1ULL;
 
          if ((event_id >= start_event) && (event_id <= end_event)) {
 
@@ -696,7 +697,8 @@ void OpenLcbUtilities_load_config_mem_reply_read_fail_message_header(openlcb_sta
 
          range = &openlcb_node->producers.range_list[i];
          event_id_t start_event = range->start_base;
-         event_id_t end_event = range->start_base + range->event_count;
+         event_id_t span = (range->event_count == 0) ? 1ULL : (1ULL << range->event_count);
+         event_id_t end_event = range->start_base + span - 1ULL;
 
          if ((event_id >= start_event) && (event_id <= end_event)) {
 
@@ -709,19 +711,13 @@ void OpenLcbUtilities_load_config_mem_reply_read_fail_message_header(openlcb_sta
      return false;
  }
 
-    /** @brief Generates a masked Event ID covering a range of consecutive events. */
+    /** @brief Generates a masked Event ID covering a range of 2^count consecutive events.
+     *
+     * @details count is the exponent N from event_range_count_enum (0..32).
+     * For N == 0 the mask is 0 and the result equals base_event_id (single event). */
  event_id_t OpenLcbUtilities_generate_event_range_id(event_id_t base_event_id, event_range_count_enum count) {
 
-     uint32_t bitsNeeded = 0;
-     uint32_t temp = count - 1;
-     while (temp > 0) {
-
-         bitsNeeded++;
-         temp >>= 1;
-
-     }
-
-     event_id_t mask = (1ULL << bitsNeeded) - 1;
+     event_id_t mask = (count == 0) ? 0ULL : ((1ULL << count) - 1ULL);
      event_id_t rangeEventID = (base_event_id & ~mask) | mask;
 
      return rangeEventID;

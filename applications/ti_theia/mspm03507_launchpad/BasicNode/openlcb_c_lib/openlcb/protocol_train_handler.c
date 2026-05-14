@@ -33,7 +33,7 @@
  * callbacks.
  *
  * @author Jim Kueneman
- * @date 20 Mar 2026
+ * @date 25 Apr 2026
  */
 
 #include "protocol_train_handler.h"
@@ -511,8 +511,11 @@ static void _handle_set_speed(openlcb_statemachine_info_t *statemachine_info) {
 
     uint16_t speed = OpenLcbUtilities_extract_word_from_openlcb_payload(statemachine_info->incoming_msg_info.msg_ptr, 1);
 
+    bool estop_was_active = false;
+
     if (state) {
 
+        estop_was_active = state->estop_active;
         state->set_speed = speed;
         state->estop_active = false;
 
@@ -535,9 +538,31 @@ static void _handle_set_speed(openlcb_statemachine_info_t *statemachine_info) {
 
     }
 
-    if (_interface && _interface->on_speed_changed) {
+    // TrainControlS 6.2: while a Global E-Stop or E-Off is active the
+    // train must remain stopped, even though Set Speed is preserved for
+    // the eventual resume.  Suppress on_speed_changed in that case so the
+    // application does not drive the motor; state->set_speed is already
+    // updated above and the Clear handler re-fires on_speed_changed with
+    // the latest value once all emergencies clear.
+    bool global_emergency = state && (state->global_estop_active || state->global_eoff_active);
+
+    if (_interface && _interface->on_speed_changed && !global_emergency) {
 
         _interface->on_speed_changed(node, speed);
+
+    }
+
+    // Symmetry with on_emergency_entered: when a fresh Set Speed clears
+    // a local ESTOP, notify the application so UIs can drop their alarm
+    // indicators.  Only fires on the true→false transition so quiescent
+    // Set Speed traffic doesn't spam the callback.
+    if (estop_was_active && state && !state->estop_active) {
+
+        if (_interface && _interface->on_emergency_exited) {
+
+            _interface->on_emergency_exited(node, TRAIN_EMERGENCY_TYPE_ESTOP);
+
+        }
 
     }
 
@@ -674,6 +699,21 @@ static void _handle_controller_config(openlcb_statemachine_info_t *statemachine_
                         state->controller_alias = msg->source_alias;
 
                     }
+
+                }
+
+                // TrainControlS §6.6: fresh controller starting — re-arm the
+                // heartbeat countdown.  The Release path zeros the counter to
+                // prevent the no-controller period from firing a false
+                // timeout; this re-establishes it now that a controller is
+                // assigned again.  Also clear any pending-send flag that may
+                // have lingered from the no-controller period (the halfway
+                // fire repeatedly retried _send_heartbeat_request, which kept
+                // returning false because controller_node_id was 0).
+                if (accepted && state->heartbeat_timeout_s > 0) {
+
+                    state->heartbeat_counter_100ms = state->heartbeat_timeout_s * 10;
+                    state->heartbeat_send_pending = 0;
 
                 }
 
@@ -1430,6 +1470,22 @@ void ProtocolTrainHandler_handle_emergency_event(openlcb_statemachine_info_t *st
 
             }
 
+            // TrainControlS 6.2: "Upon exiting all Emergency Stop states,
+            // the locomotive shall accelerate to the currently valid Set
+            // Speed".  Re-broadcast set_speed so the application's
+            // on_speed_changed handler restarts the motor at the saved
+            // value.  Suppress when any other emergency is still active —
+            // train must remain stopped until ALL three clear.
+            if (!state->estop_active && !state->global_estop_active && !state->global_eoff_active) {
+
+                if (_interface && _interface->on_speed_changed) {
+
+                    _interface->on_speed_changed(node, state->set_speed);
+
+                }
+
+            }
+
             break;
 
         case EVENT_ID_EMERGENCY_OFF:
@@ -1451,6 +1507,22 @@ void ProtocolTrainHandler_handle_emergency_event(openlcb_statemachine_info_t *st
             if (_interface && _interface->on_emergency_exited) {
 
                 _interface->on_emergency_exited(node, TRAIN_EMERGENCY_TYPE_GLOBAL_OFF);
+
+            }
+
+            // TrainControlS 6.2: same resume logic as Clear E-Stop above —
+            // signal the application to restore Set Speed once all three
+            // emergency states are clear.  E-Off also restores function
+            // outputs to their commanded state, but that is the
+            // application's responsibility and is signaled via
+            // on_emergency_exited.
+            if (!state->estop_active && !state->global_estop_active && !state->global_eoff_active) {
+
+                if (_interface && _interface->on_speed_changed) {
+
+                    _interface->on_speed_changed(node, state->set_speed);
+
+                }
 
             }
 

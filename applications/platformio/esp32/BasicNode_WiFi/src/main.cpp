@@ -16,7 +16,7 @@
 #include "openlcb_c_lib/drivers/canbus/can_config.h"
 #include "openlcb_c_lib/openlcb/openlcb_config.h"
 
-#include "openlcb_c_lib/drivers/canbus/alias_mappings.h"
+#include "openlcb_c_lib/drivers/canbus/internal_node_alias_table.h"
 #include "openlcb_c_lib/openlcb/openlcb_node.h"
 
 // put function declarations here:
@@ -96,7 +96,7 @@ void loop()
             {
 
                 printf("Success connecting to Server, Socket Handle: %d\n", socket);
-                AliasMappings_flush();
+                InternalNodeAliasTable_flush();
                 OpenLcbNode_reset_state();
                 Esp32WiFiGridconnectDriver_start(&socket);
             }

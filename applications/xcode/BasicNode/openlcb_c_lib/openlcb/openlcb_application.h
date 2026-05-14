@@ -34,7 +34,7 @@
  * before making any other call in this module.
  *
  * @author Jim Kueneman
- * @date 24 Apr 2026
+ * @date 28 Apr 2026
  */
 
 // This is a guard condition so that contents of this file are not included
@@ -213,7 +213,7 @@ extern "C" {
          *
          * @param openlcb_node    Pointer to the @ref openlcb_node_t receiving the registration.
          * @param event_id_base   Base @ref event_id_t of the range.
-         * @param range_size      Number of consecutive event IDs in the range (@ref event_range_count_enum).
+         * @param range_size      Exponent N from @ref event_range_count_enum; range covers 2^N consecutive event IDs.
          *
          * @return true if registered successfully, false if the range array is full.
          *
@@ -229,7 +229,7 @@ extern "C" {
          *
          * @param openlcb_node    Pointer to the @ref openlcb_node_t receiving the registration.
          * @param event_id_base   Base @ref event_id_t of the range.
-         * @param range_size      Number of consecutive event IDs in the range (@ref event_range_count_enum).
+         * @param range_size      Exponent N from @ref event_range_count_enum; range covers 2^N consecutive event IDs.
          *
          * @return true if registered successfully, false if the range array is full.
          *
@@ -373,6 +373,46 @@ extern "C" {
          * @see OpenLcbApplication_send_verify_node_id_addressed
          */
     extern bool OpenLcbApplication_send_verify_node_id_global(openlcb_node_t *openlcb_node);
+
+        /**
+         * @brief Sends an addressed Simple Node Information request to a specific remote alias.
+         *
+         * @details Builds an MTI_SIMPLE_NODE_INFO_REQUEST (0x0DE8) message targeting
+         * the given destination and queues it via the send_openlcb_msg callback.
+         * The remote node replies with an MTI_SIMPLE_NODE_INFO_REPLY (0x0A08) that
+         * carries the manufacturer and user information strings; the application
+         * receives that reply through the on_snip_reply callback registered on
+         * @ref openlcb_config_t and uses the ProtocolSnip_extract_* helpers to
+         * read individual fields from the reply payload.
+         *
+         * Per SimpleNodeInformationS §4.1 the request payload is empty — the
+         * destination is encoded only in the addressed-frame header.
+         *
+         * Use cases:
+         * - Throttle resolving a human-readable name for a search hit before
+         *   displaying it in the roster.
+         * - Network browser populating a node list.
+         *
+         * Per SimpleNodeInformationS §6.2 the requesting node must wait for the
+         * entire reply to arrive before sending another request to the same
+         * destination.  This module does not enforce that constraint — the
+         * application is responsible for serializing requests per destination.
+         *
+         * @param openlcb_node    Pointer to the sending @ref openlcb_node_t.
+         * @param dest_alias      12-bit CAN alias of the remote node to query.
+         * @param dest_node_id    48-bit @ref node_id_t of the remote node, or 0
+         *                        (NULL_NODE_ID) if not yet resolved.
+         *
+         * @return true if queued successfully, false if the transmit buffer is full or
+         *         the callback is NULL.
+         *
+         * @warning NULL openlcb_node causes a crash — no NULL check is performed.
+         * @warning Returns false if OpenLcbApplication_initialize() was not called first.
+         *
+         * @see ProtocolSnip_extract_user_name
+         * @see ProtocolSnip_extract_name
+         */
+    extern bool OpenLcbApplication_send_simple_node_info_request(openlcb_node_t *openlcb_node, uint16_t dest_alias, node_id_t dest_node_id);
 
         /**
          * @brief Reads bytes from the node's configuration memory via the application callback.

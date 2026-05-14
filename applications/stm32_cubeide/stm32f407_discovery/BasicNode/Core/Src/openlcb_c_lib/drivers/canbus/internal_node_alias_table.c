@@ -24,7 +24,7 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  *
- * @file alias_mappings.c
+ * @file internal_node_alias_table.c
  * @brief Implementation of the CAN alias / Node ID mapping buffer.
  *
  * @details Single static buffer instance using a linear array.  Empty slots are

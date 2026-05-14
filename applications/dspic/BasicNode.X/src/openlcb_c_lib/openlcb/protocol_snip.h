@@ -33,7 +33,7 @@
  * function for incoming SNIP replies.
  *
  * @author Jim Kueneman
- * @date 4 Mar 2026
+ * @date 28 Apr 2026
  */
 
 // This is a guard condition so that contents of this file are not included
@@ -51,6 +51,9 @@ typedef struct {
 
         /** @brief Read from config memory (ACDI User space) for user name/description.  REQUIRED. */
    uint16_t(*config_memory_read)(openlcb_node_t *openlcb_node, uint32_t address, uint16_t count, configuration_memory_buffer_t *buffer);
+
+        /** @brief A remote node returned a SNIP reply we asked for.  Optional. */
+   void (*on_snip_reply)(source_info_t *source, openlcb_msg_t *incoming_msg);
 
 } interface_openlcb_protocol_snip_t;
 
@@ -182,6 +185,89 @@ extern "C" {
          * @return true if the message is a well-formed SNIP reply.
          */
     extern bool ProtocolSnip_validate_snip_reply(openlcb_msg_t *snip_reply_msg);
+
+    // ---- Individual SNIP field extractors (used to read fields from a received reply) ----
+    //
+    // Each reads one field from a validated SNIP reply payload and copies it into a
+    // caller-provided buffer.  Use after ProtocolSnip_validate_snip_reply() returns true.
+
+        /**
+         * @brief Reads the manufacturer version ID byte from a SNIP reply.
+         *
+         * @param incoming_msg  Pointer to a validated @ref openlcb_msg_t SNIP reply.
+         * @param out_version   Destination for the version byte.
+         * @return 1 on success, 0 if the field could not be located.
+         */
+    extern uint16_t ProtocolSnip_extract_manufacturer_version_id(openlcb_msg_t *incoming_msg, uint8_t *out_version);
+
+        /**
+         * @brief Reads the manufacturer name string from a SNIP reply.
+         *
+         * @param incoming_msg  Pointer to a validated @ref openlcb_msg_t SNIP reply.
+         * @param out_buffer    Destination buffer; result is null-terminated.
+         * @param max_bytes     Size of out_buffer in bytes (must be > 0).
+         * @return Number of bytes written, including the terminating null.
+         */
+    extern uint16_t ProtocolSnip_extract_name(openlcb_msg_t *incoming_msg, char *out_buffer, uint16_t max_bytes);
+
+        /**
+         * @brief Reads the model name string from a SNIP reply.
+         *
+         * @param incoming_msg  Pointer to a validated @ref openlcb_msg_t SNIP reply.
+         * @param out_buffer    Destination buffer; result is null-terminated.
+         * @param max_bytes     Size of out_buffer in bytes (must be > 0).
+         * @return Number of bytes written, including the terminating null.
+         */
+    extern uint16_t ProtocolSnip_extract_model(openlcb_msg_t *incoming_msg, char *out_buffer, uint16_t max_bytes);
+
+        /**
+         * @brief Reads the hardware version string from a SNIP reply.
+         *
+         * @param incoming_msg  Pointer to a validated @ref openlcb_msg_t SNIP reply.
+         * @param out_buffer    Destination buffer; result is null-terminated.
+         * @param max_bytes     Size of out_buffer in bytes (must be > 0).
+         * @return Number of bytes written, including the terminating null.
+         */
+    extern uint16_t ProtocolSnip_extract_hardware_version(openlcb_msg_t *incoming_msg, char *out_buffer, uint16_t max_bytes);
+
+        /**
+         * @brief Reads the software version string from a SNIP reply.
+         *
+         * @param incoming_msg  Pointer to a validated @ref openlcb_msg_t SNIP reply.
+         * @param out_buffer    Destination buffer; result is null-terminated.
+         * @param max_bytes     Size of out_buffer in bytes (must be > 0).
+         * @return Number of bytes written, including the terminating null.
+         */
+    extern uint16_t ProtocolSnip_extract_software_version(openlcb_msg_t *incoming_msg, char *out_buffer, uint16_t max_bytes);
+
+        /**
+         * @brief Reads the user version ID byte from a SNIP reply.
+         *
+         * @param incoming_msg  Pointer to a validated @ref openlcb_msg_t SNIP reply.
+         * @param out_version   Destination for the version byte.
+         * @return 1 on success, 0 if the field could not be located.
+         */
+    extern uint16_t ProtocolSnip_extract_user_version_id(openlcb_msg_t *incoming_msg, uint8_t *out_version);
+
+        /**
+         * @brief Reads the user-provided node name string from a SNIP reply.
+         *
+         * @param incoming_msg  Pointer to a validated @ref openlcb_msg_t SNIP reply.
+         * @param out_buffer    Destination buffer; result is null-terminated.
+         * @param max_bytes     Size of out_buffer in bytes (must be > 0).
+         * @return Number of bytes written, including the terminating null.
+         */
+    extern uint16_t ProtocolSnip_extract_user_name(openlcb_msg_t *incoming_msg, char *out_buffer, uint16_t max_bytes);
+
+        /**
+         * @brief Reads the user-provided node description string from a SNIP reply.
+         *
+         * @param incoming_msg  Pointer to a validated @ref openlcb_msg_t SNIP reply.
+         * @param out_buffer    Destination buffer; result is null-terminated.
+         * @param max_bytes     Size of out_buffer in bytes (must be > 0).
+         * @return Number of bytes written, including the terminating null.
+         */
+    extern uint16_t ProtocolSnip_extract_user_description(openlcb_msg_t *incoming_msg, char *out_buffer, uint16_t max_bytes);
 
 
 #ifdef __cplusplus

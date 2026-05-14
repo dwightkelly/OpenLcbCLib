@@ -32,7 +32,7 @@
  * SNIP payload and a validation function for incoming SNIP replies.
  *
  * @author Jim Kueneman
- * @date 4 Mar 2026
+ * @date 28 Apr 2026
  *
  * @see protocol_snip.h
  * @see SimpleNodeInformationS.pdf
@@ -50,6 +50,7 @@
 #include "openlcb_utilities.h"
 #include "openlcb_buffer_store.h"
 #include "openlcb_buffer_list.h"
+
 
 
     /** @brief Stored callback interface pointer; set by _initialize(). */
@@ -342,10 +343,43 @@ void ProtocolSnip_handle_simple_node_info_request(openlcb_statemachine_info_t *s
 
 }
 
-    /** @brief Handle incoming SNIP reply — no automatic response generated. */
+    /**
+     * @brief Handle an incoming SNIP reply — fire on_snip_reply if registered.
+     *
+     * @details Algorithm:
+     * -# Mark outgoing valid = false (no automatic response).
+     * -# Return early if no on_snip_reply callback is registered.
+     * -# Validate the incoming reply via ProtocolSnip_validate_snip_reply; drop on failure.
+     * -# Build a source_info_t from the incoming message header.
+     * -# Invoke on_snip_reply with source and the incoming message pointer.
+     *    The application uses ProtocolSnip_extract_* helpers to read fields.
+     *
+     * @verbatim
+     * @param statemachine_info  Context with the incoming SNIP reply.
+     * @endverbatim
+     */
 void ProtocolSnip_handle_simple_node_info_reply(openlcb_statemachine_info_t *statemachine_info) {
 
     statemachine_info->outgoing_msg_info.valid = false;
+
+    if (!_interface || !_interface->on_snip_reply) {
+
+        return;
+
+    }
+
+    if (!ProtocolSnip_validate_snip_reply(statemachine_info->incoming_msg_info.msg_ptr)) {
+
+        return;
+
+    }
+
+    source_info_t source = {
+        statemachine_info->incoming_msg_info.msg_ptr->source_id,
+        statemachine_info->incoming_msg_info.msg_ptr->source_alias
+    };
+
+    _interface->on_snip_reply(&source, statemachine_info->incoming_msg_info.msg_ptr);
 
 }
 
@@ -386,5 +420,281 @@ bool ProtocolSnip_validate_snip_reply(openlcb_msg_t *snip_reply_msg) {
     }
 
     return true;
+
+}
+
+    /**
+     * @brief Returns the byte offset just after the nth null in the payload.
+     *
+     * @details Walks the payload counting null bytes; on encountering the nth
+     * null, returns the offset of the byte immediately following it.  Returns
+     * 0xFFFF if fewer than n nulls are present.
+     */
+static uint16_t _offset_after_n_nulls(openlcb_msg_t *incoming_msg, uint16_t n) {
+
+    uint16_t nulls_passed = 0;
+    uint16_t offset = 0;
+
+    while (offset < incoming_msg->payload_count) {
+
+        uint8_t byte = *incoming_msg->payload[offset];
+        offset = offset + 1;
+
+        if (byte == 0x00) {
+
+            nulls_passed = nulls_passed + 1;
+
+            if (nulls_passed == n) {
+
+                return offset;
+
+            }
+
+        }
+
+    }
+
+    return 0xFFFF;
+
+}
+
+    /**
+     * @brief Copies a null-terminated string starting at start_offset into out_buffer.
+     *
+     * @details Stops at the first null in the payload or when out_buffer is full
+     * (max_bytes - 1 chars + null).  Always null-terminates.  Returns 0 if
+     * start_offset is invalid or max_bytes is 0.
+     */
+static uint16_t _copy_string_at_offset(openlcb_msg_t *incoming_msg, uint16_t start_offset, char *out_buffer, uint16_t max_bytes) {
+
+    if (max_bytes == 0) {
+
+        return 0;
+
+    }
+
+    if (start_offset == 0xFFFF || start_offset >= incoming_msg->payload_count) {
+
+        out_buffer[0] = '\0';
+        return 0;
+
+    }
+
+    uint16_t bytes_written = 0;
+    uint16_t offset = start_offset;
+
+    while (offset < incoming_msg->payload_count && bytes_written < (max_bytes - 1)) {
+
+        uint8_t byte = *incoming_msg->payload[offset];
+
+        if (byte == 0x00) {
+
+            break;
+
+        }
+
+        out_buffer[bytes_written] = (char) byte;
+        bytes_written = bytes_written + 1;
+        offset = offset + 1;
+
+    }
+
+    out_buffer[bytes_written] = '\0';
+
+    return bytes_written + 1;
+
+}
+
+    /**
+     * @brief Read manufacturer version byte from a SNIP reply.
+     *
+     * @details Algorithm:
+     * -# Reject if payload_count < 1.
+     * -# Copy byte at offset 0 to *out_version.
+     *
+     * @verbatim
+     * @param incoming_msg  Validated SNIP reply.
+     * @param out_version   Destination byte.
+     * @endverbatim
+     *
+     * @return 1 on success, 0 if payload too short.
+     */
+uint16_t ProtocolSnip_extract_manufacturer_version_id(openlcb_msg_t *incoming_msg, uint8_t *out_version) {
+
+    if (incoming_msg->payload_count < 1) {
+
+        return 0;
+
+    }
+
+    *out_version = *incoming_msg->payload[0];
+
+    return 1;
+
+}
+
+    /**
+     * @brief Read manufacturer name string from a SNIP reply.
+     *
+     * @details Algorithm:
+     * -# Field starts at payload offset 1 (immediately after mfg version byte).
+     * -# Copy null-terminated string into out_buffer (truncated to max_bytes - 1).
+     *
+     * @verbatim
+     * @param incoming_msg  Validated SNIP reply.
+     * @param out_buffer    Destination buffer; result is null-terminated.
+     * @param max_bytes     Size of out_buffer.
+     * @endverbatim
+     *
+     * @return Bytes written including the terminating null.
+     */
+uint16_t ProtocolSnip_extract_name(openlcb_msg_t *incoming_msg, char *out_buffer, uint16_t max_bytes) {
+
+    return _copy_string_at_offset(incoming_msg, 1, out_buffer, max_bytes);
+
+}
+
+    /**
+     * @brief Read model string from a SNIP reply.
+     *
+     * @details Algorithm:
+     * -# Field starts immediately after the 1st null (end of mfg name).
+     * -# Copy null-terminated string into out_buffer.
+     *
+     * @verbatim
+     * @param incoming_msg  Validated SNIP reply.
+     * @param out_buffer    Destination buffer; result is null-terminated.
+     * @param max_bytes     Size of out_buffer.
+     * @endverbatim
+     *
+     * @return Bytes written including the terminating null.
+     */
+uint16_t ProtocolSnip_extract_model(openlcb_msg_t *incoming_msg, char *out_buffer, uint16_t max_bytes) {
+
+    return _copy_string_at_offset(incoming_msg, _offset_after_n_nulls(incoming_msg, 1), out_buffer, max_bytes);
+
+}
+
+    /**
+     * @brief Read hardware version string from a SNIP reply.
+     *
+     * @details Algorithm:
+     * -# Field starts immediately after the 2nd null (end of model).
+     * -# Copy null-terminated string into out_buffer.
+     *
+     * @verbatim
+     * @param incoming_msg  Validated SNIP reply.
+     * @param out_buffer    Destination buffer; result is null-terminated.
+     * @param max_bytes     Size of out_buffer.
+     * @endverbatim
+     *
+     * @return Bytes written including the terminating null.
+     */
+uint16_t ProtocolSnip_extract_hardware_version(openlcb_msg_t *incoming_msg, char *out_buffer, uint16_t max_bytes) {
+
+    return _copy_string_at_offset(incoming_msg, _offset_after_n_nulls(incoming_msg, 2), out_buffer, max_bytes);
+
+}
+
+    /**
+     * @brief Read software version string from a SNIP reply.
+     *
+     * @details Algorithm:
+     * -# Field starts immediately after the 3rd null (end of hw version).
+     * -# Copy null-terminated string into out_buffer.
+     *
+     * @verbatim
+     * @param incoming_msg  Validated SNIP reply.
+     * @param out_buffer    Destination buffer; result is null-terminated.
+     * @param max_bytes     Size of out_buffer.
+     * @endverbatim
+     *
+     * @return Bytes written including the terminating null.
+     */
+uint16_t ProtocolSnip_extract_software_version(openlcb_msg_t *incoming_msg, char *out_buffer, uint16_t max_bytes) {
+
+    return _copy_string_at_offset(incoming_msg, _offset_after_n_nulls(incoming_msg, 3), out_buffer, max_bytes);
+
+}
+
+    /**
+     * @brief Read user version byte from a SNIP reply.
+     *
+     * @details Algorithm:
+     * -# Locate offset just after the 4th null (end of sw version).
+     * -# Reject if offset is invalid or past payload end.
+     * -# Copy byte at that offset to *out_version.
+     *
+     * @verbatim
+     * @param incoming_msg  Validated SNIP reply.
+     * @param out_version   Destination byte.
+     * @endverbatim
+     *
+     * @return 1 on success, 0 if the field could not be located.
+     */
+uint16_t ProtocolSnip_extract_user_version_id(openlcb_msg_t *incoming_msg, uint8_t *out_version) {
+
+    uint16_t offset = _offset_after_n_nulls(incoming_msg, 4);
+
+    if (offset == 0xFFFF || offset >= incoming_msg->payload_count) {
+
+        return 0;
+
+    }
+
+    *out_version = *incoming_msg->payload[offset];
+
+    return 1;
+
+}
+
+    /**
+     * @brief Read user-provided node name string from a SNIP reply.
+     *
+     * @details Algorithm:
+     * -# Locate offset just after the 4th null, then advance one byte past the
+     *    user version byte.
+     * -# Copy null-terminated string into out_buffer.
+     *
+     * @verbatim
+     * @param incoming_msg  Validated SNIP reply.
+     * @param out_buffer    Destination buffer; result is null-terminated.
+     * @param max_bytes     Size of out_buffer.
+     * @endverbatim
+     *
+     * @return Bytes written including the terminating null.
+     */
+uint16_t ProtocolSnip_extract_user_name(openlcb_msg_t *incoming_msg, char *out_buffer, uint16_t max_bytes) {
+
+    uint16_t after_user_version = _offset_after_n_nulls(incoming_msg, 4);
+
+    if (after_user_version == 0xFFFF) {
+
+        return _copy_string_at_offset(incoming_msg, 0xFFFF, out_buffer, max_bytes);
+
+    }
+
+    return _copy_string_at_offset(incoming_msg, after_user_version + 1, out_buffer, max_bytes);
+
+}
+
+    /**
+     * @brief Read user-provided node description string from a SNIP reply.
+     *
+     * @details Algorithm:
+     * -# Field starts immediately after the 5th null (end of user name).
+     * -# Copy null-terminated string into out_buffer.
+     *
+     * @verbatim
+     * @param incoming_msg  Validated SNIP reply.
+     * @param out_buffer    Destination buffer; result is null-terminated.
+     * @param max_bytes     Size of out_buffer.
+     * @endverbatim
+     *
+     * @return Bytes written including the terminating null.
+     */
+uint16_t ProtocolSnip_extract_user_description(openlcb_msg_t *incoming_msg, char *out_buffer, uint16_t max_bytes) {
+
+    return _copy_string_at_offset(incoming_msg, _offset_after_n_nulls(incoming_msg, 5), out_buffer, max_bytes);
 
 }

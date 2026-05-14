@@ -335,25 +335,48 @@ extern "C" {
 
     } space_encoding_enum;
 
-        /** @brief Power-of-two event range sizes for range-identified events. */
+        /** @brief Power-of-two event range sizes for range-identified events.
+         *
+         * Each enumerator's numeric value is the exponent N in 2^N events
+         * covered by the range (0..32).  The actual event count is computed
+         * as (1ULL << N) where needed.  Storing the exponent rather than the
+         * count lets a single int-sized enumerator cover ranges up to 2^32
+         * (required by Train Search) without overflowing int. */
     typedef enum {
 
         EVENT_RANGE_COUNT_1 = 0,
-        EVENT_RANGE_COUNT_2 = 2,
-        EVENT_RANGE_COUNT_4 = 4,
-        EVENT_RANGE_COUNT_8 = 8,
-        EVENT_RANGE_COUNT_16 = 16,
-        EVENT_RANGE_COUNT_32 = 32,
-        EVENT_RANGE_COUNT_64 = 64,
-        EVENT_RANGE_COUNT_128 = 128,
-        EVENT_RANGE_COUNT_256 = 256,
-        EVENT_RANGE_COUNT_512 = 512,
-        EVENT_RANGE_COUNT_1024 = 1024,
-        EVENT_RANGE_COUNT_2048 = 2048,
-        EVENT_RANGE_COUNT_4096 = 4096,
-        EVENT_RANGE_COUNT_8192 = 8192,
-        EVENT_RANGE_COUNT_16384 = 16384,
-        EVENT_RANGE_COUNT_32768 = 32768
+        EVENT_RANGE_COUNT_2 = 1,
+        EVENT_RANGE_COUNT_4 = 2,
+        EVENT_RANGE_COUNT_8 = 3,
+        EVENT_RANGE_COUNT_16 = 4,
+        EVENT_RANGE_COUNT_32 = 5,
+        EVENT_RANGE_COUNT_64 = 6,
+        EVENT_RANGE_COUNT_128 = 7,
+        EVENT_RANGE_COUNT_256 = 8,
+        EVENT_RANGE_COUNT_512 = 9,
+        EVENT_RANGE_COUNT_1024 = 10,
+        EVENT_RANGE_COUNT_2048 = 11,
+        EVENT_RANGE_COUNT_4096 = 12,
+        EVENT_RANGE_COUNT_8192 = 13,
+        EVENT_RANGE_COUNT_16384 = 14,
+        EVENT_RANGE_COUNT_32768 = 15,
+        EVENT_RANGE_COUNT_65536 = 16,
+        EVENT_RANGE_COUNT_131072 = 17,
+        EVENT_RANGE_COUNT_262144 = 18,
+        EVENT_RANGE_COUNT_524288 = 19,
+        EVENT_RANGE_COUNT_1048576 = 20,
+        EVENT_RANGE_COUNT_2097152 = 21,
+        EVENT_RANGE_COUNT_4194304 = 22,
+        EVENT_RANGE_COUNT_8388608 = 23,
+        EVENT_RANGE_COUNT_16777216 = 24,
+        EVENT_RANGE_COUNT_33554432 = 25,
+        EVENT_RANGE_COUNT_67108864 = 26,
+        EVENT_RANGE_COUNT_134217728 = 27,
+        EVENT_RANGE_COUNT_268435456 = 28,
+        EVENT_RANGE_COUNT_536870912 = 29,
+        EVENT_RANGE_COUNT_1073741824 = 30,
+        EVENT_RANGE_COUNT_2147483648 = 31,
+        EVENT_RANGE_COUNT_4294967296 = 32
 
     } event_range_count_enum;
 
@@ -446,7 +469,7 @@ extern "C" {
     typedef struct {
 
         event_id_t start_base;              /**< Starting Event ID (bottom 16 bits must be 00.00) */
-        event_range_count_enum event_count; /**< Number of consecutive Event IDs in the range */
+        event_range_count_enum event_count; /**< Exponent N: range covers 2^N consecutive Event IDs */
 
     } event_id_range_t;
 

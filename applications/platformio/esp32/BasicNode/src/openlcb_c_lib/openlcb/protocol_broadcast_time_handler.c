@@ -284,6 +284,10 @@ void ProtocolBroadcastTimeHandler_handle_time_event(openlcb_statemachine_info_t 
             if (OpenLcbApplicationBroadcastTime_is_producer(clock_id)) {
 
                 _handle_report_date(node, clock, event_id);
+
+                // §6.5: produce the effective Report Date PCER immediately
+                OpenLcbApplicationBroadcastTime_send_report_date(node, clock_id, clock->date.month, clock->date.day);
+
                 OpenLcbApplicationBroadcastTime_trigger_sync_delay(clock_id);
 
             }
@@ -293,6 +297,10 @@ void ProtocolBroadcastTimeHandler_handle_time_event(openlcb_statemachine_info_t 
             if (OpenLcbApplicationBroadcastTime_is_producer(clock_id)) {
 
                 _handle_report_year(node, clock, event_id);
+
+                // §6.5: produce the effective Report Year PCER immediately
+                OpenLcbApplicationBroadcastTime_send_report_year(node, clock_id, clock->year.year);
+
                 OpenLcbApplicationBroadcastTime_trigger_sync_delay(clock_id);
 
             }
@@ -302,6 +310,10 @@ void ProtocolBroadcastTimeHandler_handle_time_event(openlcb_statemachine_info_t 
             if (OpenLcbApplicationBroadcastTime_is_producer(clock_id)) {
 
                 _handle_report_rate(node, clock, event_id);
+
+                // §6.5: produce the effective Report Rate PCER immediately
+                OpenLcbApplicationBroadcastTime_send_report_rate(node, clock_id, clock->rate.rate);
+
                 OpenLcbApplicationBroadcastTime_trigger_sync_delay(clock_id);
 
             }
@@ -603,11 +615,16 @@ bool ProtocolBroadcastTimeHandler_extract_year(event_id_t event_id, uint16_t *ye
      * @brief Extracts the 12-bit signed fixed-point rate from a broadcast time event ID.
      *
      * @details Rate format is 10.2 fixed point. Sign-extends bit 11 for negative rates.
+     * Returns false (without writing *rate) if event_id is not a Report Rate or
+     * Set Rate event — the rate range covers all 4096 possible 12-bit values, so
+     * we can't disambiguate by value alone like extract_time/date/year do; we
+     * must check byte 6's upper nibble explicitly.
      */
 bool ProtocolBroadcastTimeHandler_extract_rate(event_id_t event_id, int16_t *rate) {
 
     uint16_t command_data;
     uint16_t raw_rate;
+    uint8_t  type_nibble;
 
     if (!rate) {
 
@@ -616,6 +633,16 @@ bool ProtocolBroadcastTimeHandler_extract_rate(event_id_t event_id, int16_t *rat
     }
 
     command_data = (uint16_t)(event_id & BROADCAST_TIME_MASK_COMMAND_DATA);
+
+    // Reject everything that isn't byte6 = 0x4? (Report Rate, §4.4) or
+    // 0xC? (Set Rate, §4.8).  Without this guard the function happily
+    // sign-extends the low 12 bits of any byte 6/7 pair and returns true.
+    type_nibble = (uint8_t)(command_data >> 12);
+    if (type_nibble != 0x4 && type_nibble != 0xC) {
+
+        return false;
+
+    }
 
     // Strip the set command offset if present
     if (command_data >= BROADCAST_TIME_SET_COMMAND_OFFSET) {

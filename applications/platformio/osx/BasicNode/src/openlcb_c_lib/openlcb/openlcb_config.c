@@ -32,7 +32,7 @@
  * Module_initialize() functions in the correct order.
  *
  * @author Jim Kueneman
- * @date 24 Apr 2026
+ * @date 28 Apr 2026
  */
 
 #include "openlcb_config.h"
@@ -244,6 +244,9 @@ static void _build_app_broadcast_time(void) {
     _app_broadcast_time.on_time_received = _config->on_broadcast_time_received;
     _app_broadcast_time.on_date_received = _config->on_broadcast_date_received;
     _app_broadcast_time.on_year_received = _config->on_broadcast_year_received;
+    _app_broadcast_time.on_rate_received = _config->on_broadcast_rate_received;
+    _app_broadcast_time.on_clock_started = _config->on_broadcast_clock_started;
+    _app_broadcast_time.on_clock_stopped = _config->on_broadcast_clock_stopped;
     _app_broadcast_time.on_date_rollover = _config->on_broadcast_date_rollover;
 
 }
@@ -836,6 +839,8 @@ static void _build_snip(void) {
     _snip.config_memory_read = _config->config_mem_read;
 #endif
 
+    _snip.on_snip_reply = _config->on_snip_reply;
+
 }
 
 #ifdef OPENLCB_COMPILE_MEMORY_CONFIGURATION
@@ -910,7 +915,7 @@ static void _build_config_mem_write(void) {
 
 }
 
-    /** @brief Wires operations commands (options, address space info, lock, reboot, factory reset) into the config ops interface. */
+    /** @brief Wires operations commands (options, address space info, lock, reboot, factory reset, update complete) into the config ops interface. */
 static void _build_config_mem_operations(void) {
 
     memset(&_config_ops, 0, sizeof(_config_ops));
@@ -932,6 +937,7 @@ static void _build_config_mem_operations(void) {
     _config_ops.operations_request_reset_reboot           = _config->reboot;
 #ifndef OPENLCB_COMPILE_BOOTLOADER
     _config_ops.operations_request_factory_reset          = _config->factory_reset;
+    _config_ops.operations_request_update_complete        = _config->update_complete;
 #endif
 
 }

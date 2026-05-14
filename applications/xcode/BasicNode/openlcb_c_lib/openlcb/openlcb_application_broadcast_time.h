@@ -80,6 +80,31 @@
         /** @brief Called when a Report Year event is received from the network. */
         void (*on_year_received)(openlcb_node_t *openlcb_node, broadcast_clock_state_t *clock_state);
 
+        /**
+         * @brief Called when the clock rate changes from a local-origin update.
+         *
+         * @details Fired by OpenLcbApplicationBroadcastTime_set_local_rate.  The
+         * receive-side rate callback is on the handler interface; this one is for
+         * local UI updates so the same JS/application listener sees both sources.
+         */
+        void (*on_rate_received)(openlcb_node_t *openlcb_node, broadcast_clock_state_t *clock_state);
+
+        /**
+         * @brief Called when the clock transitions to running from a local-origin update.
+         *
+         * @details Fired by OpenLcbApplicationBroadcastTime_set_local_start.  Always
+         * fires — no edge detection — to mirror the receive-side handler behavior.
+         */
+        void (*on_clock_started)(openlcb_node_t *openlcb_node, broadcast_clock_state_t *clock_state);
+
+        /**
+         * @brief Called when the clock transitions to stopped from a local-origin update.
+         *
+         * @details Fired by OpenLcbApplicationBroadcastTime_set_local_stop.  Always
+         * fires — no edge detection — to mirror the receive-side handler behavior.
+         */
+        void (*on_clock_stopped)(openlcb_node_t *openlcb_node, broadcast_clock_state_t *clock_state);
+
         /** @brief Called when the clock rolls over from 23:59 to 00:00. */
         void (*on_date_rollover)(openlcb_node_t *openlcb_node, broadcast_clock_state_t *clock_state);
 
@@ -180,19 +205,132 @@ extern "C" {
     extern void OpenLcbApplicationBroadcastTime_stop(event_id_t clock_id);
 
         /**
-         * @brief Advances all running consumer clocks based on elapsed ticks.
+         * @brief Advances all running consumer and producer clocks based on elapsed ticks.
          *
-         * @details Called from the main loop with the current global tick.
-         * Uses fixed-point accumulation to handle fractional rates without
-         * floating-point arithmetic.  Fires the on_time_changed callback each time a
-         * fast-clock minute boundary is crossed.
+         * @details Called from the main loop with the current global tick.  Uses
+         * fixed-point accumulation to handle fractional rates without floating-point
+         * arithmetic.  Fires the on_time_changed callback each time a fast-clock
+         * minute boundary is crossed, and on producer clocks also broadcasts the
+         * §6.2 periodic Report Time PCER (rate-limited to once per real minute) and
+         * the §4.10 Date Rollover plus Report Year and Report Date events on each
+         * midnight crossing.
          *
          * @param current_tick  Current value of the global 100ms tick counter.
          *
          * @note Clocks with rate 0 or that are stopped are skipped.
-         * @note Only consumer clocks are advanced; producer clocks manage their own time.
+         * @note A producer clock will not advance until its own state.is_running and
+         *       state.rate.rate are non-zero.  Local-UI callers should pair
+         *       send_start / send_report_rate (which only emit on the wire) with
+         *       set_local_start / set_local_rate (which mutate local state and
+         *       fire callbacks); the auto-advance loop reads from local state.
          */
     extern void OpenLcbApplicationBroadcastTime_100ms_time_tick(uint8_t current_tick);
+
+        /**
+         * @brief Updates this clock's local time and fires the on_time_received callback.
+         *
+         * @details Use for local-origin updates such as a producer-side UI changing
+         * the displayed time.  Updates clock_state.time and resets the fast-minute
+         * accumulator so the next minute boundary is measured from the new time —
+         * matching the receive-side behavior for a Report Time event from the bus.
+         *
+         * Does NOT put any frame on the wire.  The caller is responsible for
+         * calling @ref OpenLcbApplicationBroadcastTime_send_report_time when (or
+         * if) the change should also be broadcast.
+         *
+         * No-op if the clock is not registered.
+         *
+         * @param openlcb_node  Pointer to the node owning the clock.
+         * @param clock_id      64-bit @ref event_id_t identifying the clock.
+         * @param hour          Hour value to apply (0–23).
+         * @param minute        Minute value to apply (0–59).
+         *
+         * @see OpenLcbApplicationBroadcastTime_send_report_time
+         */
+    extern void OpenLcbApplicationBroadcastTime_set_local_time(openlcb_node_t *openlcb_node, event_id_t clock_id, uint8_t hour, uint8_t minute);
+
+        /**
+         * @brief Updates this clock's local date and fires the on_date_received callback.
+         *
+         * @details Local-origin counterpart to a Report Date event from the bus.
+         * Updates clock_state.date.  Does NOT put any frame on the wire.  No-op
+         * if the clock is not registered.
+         *
+         * @param openlcb_node  Pointer to the node owning the clock.
+         * @param clock_id      64-bit @ref event_id_t identifying the clock.
+         * @param month         Month value to apply (1–12).
+         * @param day           Day value to apply (1–31).
+         *
+         * @see OpenLcbApplicationBroadcastTime_send_report_date
+         */
+    extern void OpenLcbApplicationBroadcastTime_set_local_date(openlcb_node_t *openlcb_node, event_id_t clock_id, uint8_t month, uint8_t day);
+
+        /**
+         * @brief Updates this clock's local year and fires the on_year_received callback.
+         *
+         * @details Local-origin counterpart to a Report Year event from the bus.
+         * Updates clock_state.year.  Does NOT put any frame on the wire.  No-op
+         * if the clock is not registered.
+         *
+         * @param openlcb_node  Pointer to the node owning the clock.
+         * @param clock_id      64-bit @ref event_id_t identifying the clock.
+         * @param year          Year value to apply (0–4095).
+         *
+         * @see OpenLcbApplicationBroadcastTime_send_report_year
+         */
+    extern void OpenLcbApplicationBroadcastTime_set_local_year(openlcb_node_t *openlcb_node, event_id_t clock_id, uint16_t year);
+
+        /**
+         * @brief Updates this clock's local rate and fires the on_rate_received callback.
+         *
+         * @details Local-origin counterpart to a Report Rate event from the bus.
+         * Updates clock_state.rate and resets the fast-minute accumulator so the
+         * next minute boundary uses the new rate from a clean baseline — matching
+         * the receive-side behavior for a Report Rate event.
+         *
+         * Without this call, a producer that broadcasts a new rate via
+         * @ref OpenLcbApplicationBroadcastTime_send_report_rate will not advance
+         * its own modeled time at the new rate, because loopback self-skip
+         * prevents the producer from receiving its own rate event back.
+         *
+         * Does NOT put any frame on the wire.  No-op if the clock is not registered.
+         *
+         * @param openlcb_node  Pointer to the node owning the clock.
+         * @param clock_id      64-bit @ref event_id_t identifying the clock.
+         * @param rate          12-bit signed fixed-point rate (4 = 1.0x real-time).
+         *
+         * @see OpenLcbApplicationBroadcastTime_send_report_rate
+         */
+    extern void OpenLcbApplicationBroadcastTime_set_local_rate(openlcb_node_t *openlcb_node, event_id_t clock_id, int16_t rate);
+
+        /**
+         * @brief Marks this clock running and fires the on_clock_started callback.
+         *
+         * @details Local-origin counterpart to a received Cmd Start event.  Sets
+         * is_running = true and resets the fast-minute accumulator so the first
+         * post-start minute boundary is measured from now.  Does NOT put any
+         * frame on the wire.  No-op if the clock is not registered.
+         *
+         * @param openlcb_node  Pointer to the node owning the clock.
+         * @param clock_id      64-bit @ref event_id_t identifying the clock.
+         *
+         * @see OpenLcbApplicationBroadcastTime_send_start
+         */
+    extern void OpenLcbApplicationBroadcastTime_set_local_start(openlcb_node_t *openlcb_node, event_id_t clock_id);
+
+        /**
+         * @brief Marks this clock stopped and fires the on_clock_stopped callback.
+         *
+         * @details Local-origin counterpart to a received Cmd Stop event.  Sets
+         * is_running = false.  Does NOT put any frame on the wire.  No-op if
+         * the clock is not registered.
+         *
+         * @param openlcb_node  Pointer to the node owning the clock.
+         * @param clock_id      64-bit @ref event_id_t identifying the clock.
+         *
+         * @see OpenLcbApplicationBroadcastTime_send_stop
+         */
+    extern void OpenLcbApplicationBroadcastTime_set_local_stop(openlcb_node_t *openlcb_node, event_id_t clock_id);
 
         /**
          * @brief Sends a Report Time event (Producer Identified Set) for a producer clock.
